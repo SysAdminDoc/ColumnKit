@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { EditorLayout, correctFloor, leaves } from './layout';
+import { EditorLayout, correctFloor, describeColumnChange, leaves } from './layout';
 
 const CONFIG_SECTION = 'columnkit';
 
@@ -57,27 +57,10 @@ async function setColumns(columns: number): Promise<void> {
 
     await vscode.commands.executeCommand('vscode.setEditorLayout', layout);
 
-    if (columns < before) {
-        const merged = before - columns;
-        vscode.window.setStatusBarMessage(
-            `ColumnKit: ${columns} columns, ${merged} merged into the last one. Nothing was closed.`,
-            5000
-        );
-    } else if (columns > before) {
-        vscode.window.setStatusBarMessage(
-            `ColumnKit: ${columns} columns, ${columns - before} empty.`,
-            5000
-        );
-    } else {
-        vscode.window.setStatusBarMessage(`ColumnKit: ${columns} columns, evened.`, 3000);
-    }
-
-    if (estimateFloorRisk(columns)) {
-        vscode.window.setStatusBarMessage(
-            `ColumnKit: ${columns} columns may sit at the minimum width and expand on click.`,
-            6000
-        );
-    }
+    vscode.window.setStatusBarMessage(
+        describeColumnChange({ columns, before, floorRisk: estimateFloorRisk(columns) }),
+        6000
+    );
 }
 
 async function pickColumns(): Promise<void> {

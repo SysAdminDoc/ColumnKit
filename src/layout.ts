@@ -33,6 +33,39 @@ export function leaves(nodes: LayoutNode[], out: LayoutNode[] = []): LayoutNode[
 /** How far above the floor a corrected column is placed. */
 export const CORRECTION_MARGIN = 24;
 
+export interface ColumnChange {
+    /** Column count that was requested. */
+    columns: number;
+    /** Column count before the change. */
+    before: number;
+    /** Whether the result may leave columns on the minimum-width floor. */
+    floorRisk: boolean;
+}
+
+/**
+ * One message describing the whole outcome.
+ *
+ * Two consecutive setStatusBarMessage calls do not queue: the second replaces
+ * the first. Reporting the merge and the floor risk separately meant the merge
+ * notice was destroyed in exactly the case that carried both.
+ */
+export function describeColumnChange(change: ColumnChange): string {
+    const { columns, before, floorRisk } = change;
+    const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+    let outcome: string;
+    if (columns < before) {
+        outcome = `${columns} columns, ${plural(before - columns, 'column')} merged into the last one. Nothing was closed.`;
+    } else if (columns > before) {
+        outcome = `${columns} columns, ${plural(columns - before, 'empty column')} added.`;
+    } else {
+        outcome = `${columns} columns, evened.`;
+    }
+
+    const risk = floorRisk ? ' Columns may sit at the minimum width and expand on click.' : '';
+    return `ColumnKit: ${outcome}${risk}`;
+}
+
 export interface Correction {
     /** Leaf sizes after correction, in the same depth-first order as `leaves`. */
     sizes: number[];

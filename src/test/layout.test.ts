@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { CORRECTION_MARGIN, correctFloor, leaves } from '../layout';
+import { CORRECTION_MARGIN, correctFloor, describeColumnChange, leaves } from '../layout';
 
 suite('leaves', () => {
     test('returns a flat list for a flat layout', () => {
@@ -70,5 +70,39 @@ suite('correctFloor', () => {
         assert.strictEqual(correctFloor([220], 0, floor), undefined);
         assert.strictEqual(correctFloor([220, 600], -1, floor), undefined);
         assert.strictEqual(correctFloor([220, 600], 9, floor), undefined);
+    });
+});
+
+suite('describeColumnChange', () => {
+    test('reports a merge on its own', () => {
+        const msg = describeColumnChange({ columns: 2, before: 5, floorRisk: false });
+        assert.match(msg, /3 columns merged into the last one/);
+        assert.ok(!/minimum width/.test(msg), 'should not mention floor risk when there is none');
+    });
+
+    test('reports floor risk on its own', () => {
+        const msg = describeColumnChange({ columns: 4, before: 4, floorRisk: true });
+        assert.match(msg, /evened/);
+        assert.match(msg, /minimum width/);
+    });
+
+    test('reports a merge and floor risk in the SAME message', () => {
+        // The regression this covers: two setStatusBarMessage calls do not queue,
+        // so the risk notice used to destroy the merge notice.
+        const msg = describeColumnChange({ columns: 2, before: 6, floorRisk: true });
+        assert.match(msg, /4 columns merged into the last one/, 'merge fact lost');
+        assert.match(msg, /minimum width/, 'floor-risk fact lost');
+    });
+
+    test('reports added empty columns', () => {
+        assert.match(
+            describeColumnChange({ columns: 6, before: 4, floorRisk: false }),
+            /2 empty columns added/
+        );
+    });
+
+    test('uses singular wording for a single column', () => {
+        assert.match(describeColumnChange({ columns: 4, before: 5, floorRisk: false }), /1 column merged/);
+        assert.match(describeColumnChange({ columns: 5, before: 4, floorRisk: false }), /1 empty column added/);
     });
 });

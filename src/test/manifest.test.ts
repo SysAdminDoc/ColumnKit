@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import type { ColumnKitApi } from '../extension';
 
 /**
  * Manifest contract. These are declarations VS Code reads before any code runs,
@@ -9,7 +10,7 @@ import * as vscode from 'vscode';
  */
 suite('manifest', () => {
     const extension = () => {
-        const ext = vscode.extensions.getExtension('SysAdminDoc.columnkit');
+        const ext = vscode.extensions.getExtension<ColumnKitApi>('SysAdminDoc.columnkit');
         assert.ok(ext, 'ColumnKit should be present in the test host');
         return ext;
     };
@@ -53,6 +54,20 @@ suite('manifest', () => {
         assert.strictEqual(bytes.subarray(12, 16).toString('ascii'), 'IHDR');
         assert.ok(bytes.readUInt32BE(16) >= 128, `icon is ${bytes.readUInt32BE(16)}px wide`);
         assert.ok(bytes.readUInt32BE(20) >= 128, `icon is ${bytes.readUInt32BE(20)}px tall`);
+    });
+
+    test('opens a log channel and reports what activation cost', async () => {
+        // CK-16. The guard mutates the layout from a background handler, and
+        // until now a misfire left no record anywhere.
+        const columnKit = extension().exports;
+        assert.strictEqual(columnKit.log.name, 'ColumnKit');
+        assert.ok(typeof columnKit.log.trace === 'function', 'not a LogOutputChannel');
+        assert.ok(
+            columnKit.activationMs >= 0 && columnKit.activationMs < 5000,
+            `implausible activation time: ${columnKit.activationMs}ms`
+        );
+        // Printed so the README figure comes from a real run.
+        console.log(`COLUMNKIT_PROBE activationMs=${columnKit.activationMs}`);
     });
 
     test('every contributed command is registered at runtime', async () => {

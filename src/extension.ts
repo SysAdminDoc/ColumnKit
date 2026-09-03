@@ -98,6 +98,14 @@ const history = new LayoutHistory();
 /** Set by activate(). Undo needs it to hold corrections off during a restore. */
 let floorGuard: FloorGuard | undefined;
 
+/**
+ * Set by activate(). Quiet by default: VS Code decides the level, and the user
+ * raises it with `Developer: Set Log Level` or `--log SysAdminDoc.columnkit:trace`.
+ * A bespoke `columnkit.trace` setting would duplicate machinery the editor
+ * already has.
+ */
+let log: vscode.LogOutputChannel | undefined;
+
 async function remember(): Promise<EditorLayout | undefined> {
     const layout = await readLayout();
     if (layout) {
@@ -479,6 +487,11 @@ class FloorGuard {
                 groups: correction.sizes.map(size => ({ size }))
             });
             this.corrections++;
+            log?.trace(
+                `raised ${correction.corrected.length} of ${sizes.length} columns off the floor: ` +
+                `${JSON.stringify(sizes)} -> ${JSON.stringify(correction.sizes)} ` +
+                `(floors ${JSON.stringify(floors)})`
+            );
             return true;
         } catch {
             // Never let a layout read or write break editor handling.
@@ -498,11 +511,19 @@ export interface ColumnKitApi {
     floorGuard: FloorGuard;
     history: LayoutHistory;
     statusBar: { readonly contributed: readonly vscode.StatusBarItem[] };
+    log: vscode.LogOutputChannel;
+    /** How long activate() took, in milliseconds. Reported in the log. */
+    activationMs: number;
     /** Extension subscription count. Exposed so the tests can watch for leaks. */
     subscriptionCount(): number;
 }
 
 export function activate(context: vscode.ExtensionContext): ColumnKitApi {
+    const started = Date.now();
+
+    log = vscode.window.createOutputChannel('ColumnKit', { log: true });
+    context.subscriptions.push(log);
+
     context.subscriptions.push(
         vscode.commands.registerCommand('columnkit.even', evenColumns),
         vscode.commands.registerCommand('columnkit.pickColumns', pickColumns),
@@ -541,16 +562,22 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
 
     // There is no API to enumerate status bar items or observe the guard from
     // outside, so the tests reach them through the activation result.
+    const activationMs = Date.now() - started;
+    log.info(`ColumnKit activated in ${activationMs}ms`);
+
     return {
         floorGuard: guard,
         history,
         statusBar,
+        log,
+        activationMs,
         subscriptionCount: () => context.subscriptions.length
     };
 }
 
 export function deactivate(): void {
     floorGuard = undefined;
+    log = undefined;
     // Module state outlives the extension host's activation, so a second
     // activation would otherwise inherit the previous session's undo stack.
     history.clear();

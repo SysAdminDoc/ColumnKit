@@ -65,6 +65,12 @@ That drops a `.vsix` in `dist/`, named for the version in `package.json`. Instal
 code --install-extension dist/columnkit-*.vsix
 ```
 
+## When it misbehaves
+
+ColumnKit writes to its own output channel. Open the Output panel and pick `ColumnKit` from the dropdown. It is quiet unless something happens, and every automatic correction is logged at trace level with the widths before and after, so run `Developer: Set Log Level`, choose ColumnKit, and pick Trace to see them. There is no setting to remember, and nothing is logged anywhere else.
+
+Startup cost is 1ms measured in a clean window. Activation opens the log channel and one status bar item, and touches nothing on disk or over the network.
+
 ## Known limits
 
 The floor a column has to clear isn't always 220. VS Code compares a group against whatever its own editor pane asks for. Settings wants 500 and is handled. A side-by-side editor wants roughly double the normal minimum, and the extension API gives no way to tell one apart from an ordinary tab, so that case is still missed. Chat panels, terminals, notebooks and diffs all sit at 220.

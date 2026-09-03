@@ -10,6 +10,7 @@
 - `RESEARCH.md` and `ROADMAP.md` were being packaged into the published `.vsix`. They are now excluded.
 
 ### Added
+- A `ColumnKit` output channel. Automatic corrections are logged at trace level with the widths before and after, so a misfire leaves a record instead of vanishing. Raise the level with `Developer: Set Log Level`.
 - An icon, so the extension is recognisable in the Extensions view.
 - `extensionKind: ["ui"]`, so a Remote SSH, WSL or Codespaces window stops installing and running this on the remote host when it only ever touches local window layout. Virtual workspaces are declared supported for the same reason.
 

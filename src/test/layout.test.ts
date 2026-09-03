@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { CORRECTION_MARGIN, correctFloor, describeColumnChange, leaves } from '../layout';
+import { CORRECTION_MARGIN, correctFloor, describeColumnChange, isFlat, leaves } from '../layout';
 
 suite('leaves', () => {
     test('returns a flat list for a flat layout', () => {
@@ -22,57 +22,95 @@ suite('leaves', () => {
 
 suite('correctFloor', () => {
     const floor = 220;
+    const target = floor + CORRECTION_MARGIN;
+    const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
     test('raises a group sitting exactly on the floor', () => {
-        const result = correctFloor([220, 600], 0, floor);
+        const result = correctFloor([220, 600], floor);
         assert.ok(result, 'expected a correction');
-        assert.strictEqual(result.sizes[0], floor + CORRECTION_MARGIN);
+        assert.strictEqual(result.sizes[0], target);
     });
 
-    test('preserves the total width so the editor area is unchanged', () => {
-        const before = [220, 600, 400];
-        const result = correctFloor(before, 0, floor);
+    test('raises EVERY group on the floor, not just one', () => {
+        // The whole point: VS Code expands on activation before the extension
+        // host is told, so each group must be disarmed before it is clicked.
+        const result = correctFloor([220, 220, 1400], floor);
         assert.ok(result);
-        const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
-        assert.strictEqual(sum(result.sizes), sum(before));
+        assert.strictEqual(result.sizes[0], target);
+        assert.strictEqual(result.sizes[1], target);
+        assert.deepStrictEqual(result.corrected, [0, 1]);
     });
 
-    test('leaves a group that is already clear of the floor alone', () => {
-        assert.strictEqual(correctFloor([221, 600], 0, floor), undefined);
-        assert.strictEqual(correctFloor([600, 600], 0, floor), undefined);
-    });
-
-    test('corrects a group below the floor, not only one exactly on it', () => {
-        const result = correctFloor([100, 900], 0, floor);
-        assert.ok(result);
-        assert.strictEqual(result.sizes[0], floor + CORRECTION_MARGIN);
-    });
-
-    test('refuses when no sibling can spare the space', () => {
-        // Both neighbours are themselves on the floor. Taking from them would
-        // just move the bug to another column.
-        assert.strictEqual(correctFloor([220, 220, 220], 0, floor), undefined);
-    });
-
-    test('never pushes a donor below the target width', () => {
-        const result = correctFloor([220, 250, 260], 0, floor);
-        if (result) {
-            for (let i = 1; i < result.sizes.length; i++) {
-                assert.ok(
-                    result.sizes[i] >= floor,
-                    `donor ${i} fell to ${result.sizes[i]}, at or under the floor`
-                );
+    test('preserves the total width exactly', () => {
+        for (const before of [[220, 600, 400], [220, 220, 1400], [100, 900], [220, 245, 900]]) {
+            const result = correctFloor(before, floor);
+            if (result) {
+                assert.strictEqual(sum(result.sizes), sum(before), `total moved for ${before}`);
             }
         }
     });
 
+    test('leaves a group that is already clear of the floor alone', () => {
+        assert.strictEqual(correctFloor([221, 600], floor), undefined);
+        assert.strictEqual(correctFloor([600, 600], floor), undefined);
+    });
+
+    test('corrects a group below the floor, not only one exactly on it', () => {
+        const result = correctFloor([100, 900], floor);
+        assert.ok(result);
+        assert.strictEqual(result.sizes[0], target);
+    });
+
+    test('refuses when no sibling can spare the space', () => {
+        assert.strictEqual(correctFloor([220, 220, 220], floor), undefined);
+    });
+
+    test('never leaves any group below the target, over a wide input sweep', () => {
+        // Replaces an earlier version of this test whose assertions sat inside
+        // `if (result)` on an input that always refused, so the body never ran.
+        let corrections = 0;
+        for (let a = 200; a <= 260; a += 4) {
+            for (let b = 230; b <= 400; b += 7) {
+                for (let c = 230; c <= 900; c += 31) {
+                    const before = [a, b, c];
+                    const result = correctFloor(before, floor);
+                    if (!result) {
+                        continue;
+                    }
+                    corrections++;
+                    assert.strictEqual(sum(result.sizes), sum(before), `total moved for ${before}`);
+                    // The safety property is that nothing is left ON or UNDER the
+                    // floor, which is what arms the expand. A group that started
+                    // above the floor but below target was never armed and must
+                    // not be moved.
+                    for (let i = 0; i < result.sizes.length; i++) {
+                        assert.ok(
+                            result.sizes[i] > floor,
+                            `${before} -> ${result.sizes} left index ${i} at ${result.sizes[i]}, on or under floor ${floor}`
+                        );
+                    }
+                }
+            }
+        }
+        // Guards against the sweep silently exercising nothing.
+        assert.ok(corrections > 50, `sweep only produced ${corrections} corrections`);
+    });
+
     test('refuses degenerate input rather than throwing', () => {
-        assert.strictEqual(correctFloor([220], 0, floor), undefined);
-        assert.strictEqual(correctFloor([220, 600], -1, floor), undefined);
-        assert.strictEqual(correctFloor([220, 600], 9, floor), undefined);
+        assert.strictEqual(correctFloor([220], floor), undefined);
+        assert.strictEqual(correctFloor([], floor), undefined);
     });
 });
 
+suite('isFlat', () => {
+    test('accepts a flat layout', () => {
+        assert.strictEqual(isFlat([{ size: 1 }, { size: 2 }]), true);
+    });
+
+    test('rejects a nested layout, whose sizes mix widths and heights', () => {
+        assert.strictEqual(isFlat([{ size: 1 }, { size: 2, groups: [{ size: 1 }, { size: 1 }] }]), false);
+    });
+});
 suite('describeColumnChange', () => {
     test('reports a merge on its own', () => {
         const msg = describeColumnChange({ columns: 2, before: 5, floorRisk: false });

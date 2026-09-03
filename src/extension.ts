@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { EditorLayout, correctFloor, describeColumnChange, leaves } from './layout';
+import { EditorLayout, correctFloor, describeColumnChange, isFlat } from './layout';
 
 const CONFIG_SECTION = 'columnkit';
 
@@ -145,20 +145,29 @@ class StatusBar {
 }
 
 /**
- * Keeps the active group off its minimum width.
+ * Keeps every editor group off its minimum width, so the expand never arms.
  *
- * VS Code's EditorPart.doRestoreGroup expands a group on activation when
+ * VS Code's EditorPart.doRestoreGroup expands a group when
  * `viewSize.width === group.minimumWidth`. The comparison is strict equality, so
- * a group one pixel clear of the floor is never touched. Raising the group as it
- * becomes active prevents the expand instead of undoing it afterwards.
+ * a group one pixel clear of the floor is never touched.
+ *
+ * Reacting to activation cannot work: doRestoreGroup runs synchronously inside
+ * doSetGroupActive, in the renderer, before the activation event is fired. By the
+ * time the extension host is told, the expand has already happened. So this
+ * disarms every group ahead of any click rather than trying to win a race it
+ * cannot win.
  *
  * Driven by onDidChangeTabGroups rather than onDidChangeActiveTextEditor because
  * the latter only fires for text editors and never for webview panes, which is
  * what AI chat sessions are.
+ *
+ * Known gap: a sash drag raises no event, so a group the user drags onto the
+ * floor stays armed until the next tab-group change.
  */
 class FloorGuard {
     private timer: NodeJS.Timeout | undefined;
     private correcting = false;
+    private pending = false;
     private disposed = false;
 
     /** Corrections applied since activation. Read by the tests. */
@@ -175,35 +184,64 @@ class FloorGuard {
     }
 
     async run(): Promise<boolean> {
-        // A correction changes geometry, which re-enters this same event. Without
-        // this guard the handler would drive itself.
-        if (this.correcting || this.disposed) {
+        // Serialise against an in-flight correction. Anything that arrives while
+        // one is running is remembered and retried, not dropped.
+        if (this.correcting) {
+            this.pending = true;
+            return false;
+        }
+        if (this.disposed) {
             return false;
         }
         this.correcting = true;
         try {
+            // Whether THIS invocation changed anything. Reporting the lifetime
+            // counter here would make every later no-op look like a success.
+            let applied = false;
+            do {
+                this.pending = false;
+                if (!(await this.correctOnce())) {
+                    break;
+                }
+                applied = true;
+            } while (this.pending && !this.disposed);
+            return applied;
+        } finally {
+            this.correcting = false;
+        }
+    }
+
+    private async correctOnce(): Promise<boolean> {
+        // Re-read the setting here rather than at schedule time, so turning it
+        // off inside the debounce window still cancels the pending correction.
+        if (this.disposed || !config().get<boolean>('autoCorrect', true)) {
+            return false;
+        }
+        try {
             const layout = await readLayout();
-            if (!layout) {
-                return false;
-            }
-            const nodes = leaves(layout.groups);
-            const groups = vscode.window.tabGroups.all;
-
-            // A mismatch means the leaf order cannot be trusted to line up with
-            // ViewColumn: an auxiliary window is open, or the grid is nested in a
-            // shape this does not model. Documented no-op rather than a guess.
-            if (nodes.length !== groups.length || nodes.length < 2) {
+            if (!layout || this.disposed) {
                 return false;
             }
 
-            const activeIndex = groups.findIndex(g => g.isActive);
-            if (activeIndex < 0) {
+            // A nested grid mixes widths and heights in one size list, and a flat
+            // write would collapse it. Leaf count always equals group count, so
+            // only the shape can tell us; bail rather than guess.
+            if (!isFlat(layout.groups) || layout.groups.length < 2) {
                 return false;
             }
 
             const floor = config().get<number>('minGroupWidth', 220);
-            const sizes = nodes.map(n => n.size ?? 0);
-            const correction = correctFloor(sizes, activeIndex, floor);
+            const sizes = layout.groups.map(n => n.size ?? 0);
+
+            // A group created moments ago reports the raw weight it was written
+            // with until the grid lays it out, so a read straight after a write
+            // can return values like 0.01 instead of pixels. Acting on those
+            // would be arithmetic on garbage.
+            if (sizes.some(size => size < 1)) {
+                return false;
+            }
+
+            const correction = correctFloor(sizes, floor);
             if (!correction) {
                 return false;
             }
@@ -215,13 +253,10 @@ class FloorGuard {
             this.corrections++;
             return true;
         } catch {
-            // Never let a layout read or write break focus handling.
+            // Never let a layout read or write break editor handling.
             return false;
-        } finally {
-            this.correcting = false;
         }
     }
-
     dispose(): void {
         this.disposed = true;
         if (this.timer) {

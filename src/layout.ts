@@ -69,58 +69,81 @@ export function describeColumnChange(change: ColumnChange): string {
 export interface Correction {
     /** Leaf sizes after correction, in the same depth-first order as `leaves`. */
     sizes: number[];
-    /** Index of the leaf that was raised off the floor. */
-    corrected: number;
+    /** Indexes of the leaves that were raised off the floor. */
+    corrected: number[];
+}
+
+/** True when the layout is a single flat row or column with no nested branches. */
+export function isFlat(nodes: LayoutNode[]): boolean {
+    return nodes.every(n => !n.groups || n.groups.length === 0);
 }
 
 /**
- * Raise the group at `index` clear of `floor`, taking the difference from
- * siblings that have room to give.
+ * Raise every group that is on or under `floor` clear of it, taking the space
+ * from groups that have headroom.
  *
- * Returns undefined when nothing needs doing, or when no sibling can spare the
- * space. Refusing is deliberate: forcing it would push another group onto the
- * floor and simply move the bug, and VS Code clamps a below-minimum request back
- * to exactly the minimum, which is the value that arms the expand-on-focus
- * trigger in the first place.
+ * Corrects all of them rather than only the active one. VS Code's expand runs
+ * synchronously in the renderer inside doSetGroupActive, before the extension
+ * host is even told the active group changed, so reacting to activation is
+ * always too late. Disarming every group ahead of the click is the only ordering
+ * an extension can win.
+ *
+ * Returns undefined when nothing needs doing, or when the donors cannot cover
+ * the cost. Refusing is deliberate: forcing it would push a donor onto the floor
+ * and simply move the trigger, and VS Code clamps a below-minimum request back
+ * to exactly the minimum, which is the value that arms it.
  */
 export function correctFloor(
     sizes: number[],
-    index: number,
     floor: number
 ): Correction | undefined {
-    if (index < 0 || index >= sizes.length || sizes.length < 2) {
+    if (sizes.length < 2) {
         return undefined;
     }
     const target = floor + CORRECTION_MARGIN;
-    const current = sizes[index];
-    if (current > floor) {
+    const needy = sizes
+        .map((size, i) => ({ i, deficit: size <= floor ? target - size : 0 }))
+        .filter(n => n.deficit > 0);
+    if (needy.length === 0) {
         return undefined;
     }
 
-    const needed = target - current;
+    const needed = needy.reduce((sum, n) => sum + n.deficit, 0);
     const donors = sizes
-        .map((size, i) => ({ i, spare: i === index ? 0 : Math.max(0, size - target) }))
+        .map((size, i) => ({ i, spare: size > target ? size - target : 0 }))
         .filter(d => d.spare > 0);
-
     const available = donors.reduce((sum, d) => sum + d.spare, 0);
     if (available < needed) {
         return undefined;
     }
 
     const next = sizes.slice();
-    next[index] = target;
-
-    let remaining = needed;
-    for (let n = 0; n < donors.length; n++) {
-        const donor = donors[n];
-        // Last donor absorbs the rounding remainder so the total is preserved.
-        const take =
-            n === donors.length - 1
-                ? remaining
-                : Math.min(donor.spare, Math.round((donor.spare / available) * needed));
-        next[donor.i] -= take;
-        remaining -= take;
+    for (const n of needy) {
+        next[n.i] = target;
     }
 
-    return { sizes: next, corrected: index };
+    let remaining = needed;
+    for (const donor of donors) {
+        if (remaining <= 0) {
+            break;
+        }
+        // Every donor is capped at its own spare, so none can be pushed below
+        // target. Rounding up keeps the loop converging; the final clamp below
+        // settles any residue.
+        const share = Math.min(donor.spare, Math.ceil((donor.spare / available) * needed), remaining);
+        next[donor.i] -= share;
+        remaining -= share;
+    }
+
+    // Total must be preserved exactly, or the write rescales the editor area.
+    if (remaining !== 0) {
+        const slack = donors.find(d => next[d.i] - remaining >= target);
+        if (!slack) {
+            return undefined;
+        }
+        next[slack.i] -= remaining;
+    }
+
+    return { sizes: next, corrected: needy.map(n => n.i) };
 }
+

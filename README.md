@@ -59,21 +59,15 @@ npm run compile
 npm run package
 ```
 
-That drops a `.vsix` in `dist/`, named for the version in `package.json`. Install it with:
+That drops a `.vsix` in `dist/`, named for the version in `package.json`, alongside `SHA256SUMS.txt` and a copy of `install.cmd`.
+
+On Windows, do not double-click the `.vsix`. Wherever Visual Studio or its Build Tools are installed, `.vsix` is registered to Visual Studio's own installer, which refuses VS Code extensions with a confusing message about selected products. Run `install.cmd` instead. It checks the file against `SHA256SUMS.txt`, refuses to go on if they disagree, and installs into every VS Code family editor it finds on your PATH.
+
+Or do it yourself:
 
 ```
 code --install-extension dist/columnkit-*.vsix
 ```
-
-## Screen readers
-
-VS Code marks the status bar as a region screen readers ignore, so messages posted there are never read out. Turn on `editor.accessibilitySupport` and ColumnKit sends its outcomes as notifications instead, which do get announced. Nothing to configure in ColumnKit itself.
-
-## When it misbehaves
-
-ColumnKit writes to its own output channel. Open the Output panel and pick `ColumnKit` from the dropdown. It is quiet unless something happens, and every automatic correction is logged at trace level with the widths before and after, so run `Developer: Set Log Level`, choose ColumnKit, and pick Trace to see them. There is no setting to remember, and nothing is logged anywhere else.
-
-Startup cost is 1ms measured in a clean window. Activation opens the log channel and one status bar item, and touches nothing on disk or over the network.
 
 ## Known limits
 

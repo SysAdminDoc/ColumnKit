@@ -118,7 +118,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package --out dist/",
+    "package": "vsce package --out dist/ && node scripts/checksums.js",
     "test": "vscode-test"
   },
   "devDependencies": {

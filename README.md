@@ -41,7 +41,6 @@ If you would rather have the numbers as permanent buttons instead of a hover men
 | `columnkit.statusBarPresets` | `[]` | Extra numbered buttons beside `Even`. Empty by default, because the same counts are one click away in the hover menu. Setting it also brings back the picker button. |
 | `columnkit.statusBarAlignment` | `left` | Which end of the status bar the buttons sit on. |
 | `columnkit.showEditorTitleButton` | `false` | Adds an `Even` icon to each editor group's title bar. Off by default, because a narrow column pushes it straight into the overflow menu where it stops being one click. |
-| `columnkit.minGroupWidth` | `220` | The constant used to warn when a column count can't fit above the floor. Leave it alone unless a future VS Code build changes the value. |
 
 ## Commands
 
@@ -68,7 +67,7 @@ code --install-extension dist/columnkit-*.vsix
 
 ## Known limits
 
-The floor a column has to clear isn't always 220. VS Code compares a group against whatever its own editor pane asks for, and a Settings tab wants 500, a side-by-side diff about 440. Those panes can still expand on click. Everything else, including chat panels and terminals, sits at 220 and is handled.
+The floor a column has to clear isn't always 220. VS Code compares a group against whatever its own editor pane asks for. Settings wants 500 and is handled. A side-by-side editor wants roughly double the normal minimum, and the extension API gives no way to tell one apart from an ordinary tab, so that case is still missed. Chat panels, terminals, notebooks and diffs all sit at 220.
 
 ## License
 

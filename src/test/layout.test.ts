@@ -1,6 +1,8 @@
 import * as assert from 'assert';
 import {
     CORRECTION_MARGIN,
+    DEFAULT_FLOOR,
+    SETTINGS_FLOOR,
     LayoutHistory,
     correctFloor,
     describeColumnChange,
@@ -158,6 +160,32 @@ suite('correctFloor', () => {
     test('refuses degenerate input rather than throwing', () => {
         assert.strictEqual(correctFloor([220], floor), undefined);
         assert.strictEqual(correctFloor([], floor), undefined);
+    });
+
+    test('honours a different floor per group', () => {
+        // CK-12. A Settings pane arms the expand at 500, so 400px is on its
+        // floor while the same width is comfortably clear for a chat panel.
+        const result = correctFloor([400, 1200], [SETTINGS_FLOOR, DEFAULT_FLOOR]);
+        assert.ok(result, 'the 500-floor group should have been raised');
+        assert.strictEqual(result.sizes[0], SETTINGS_FLOOR + CORRECTION_MARGIN);
+        assert.deepStrictEqual(result.corrected, [0]);
+        assert.strictEqual(result.sizes[0] + result.sizes[1], 1600, 'total moved');
+    });
+
+    test('leaves a group alone that only looks floored under the wrong floor', () => {
+        // 400 is far above 220, so with ordinary panes there is nothing to do.
+        assert.strictEqual(correctFloor([400, 1200], [DEFAULT_FLOOR, DEFAULT_FLOOR]), undefined);
+    });
+
+    test('does not treat a wide-floor group as a donor below its own target', () => {
+        // 540 is above the default target but below the Settings target of 524
+        // plus nothing to spare, so it must not fund another group's deficit.
+        const result = correctFloor([220, 540], [DEFAULT_FLOOR, SETTINGS_FLOOR]);
+        assert.strictEqual(result, undefined, 'the Settings group has no spare to give');
+    });
+
+    test('refuses a floor list that does not line up with the sizes', () => {
+        assert.strictEqual(correctFloor([220, 600, 900], [220, 220]), undefined);
     });
 });
 

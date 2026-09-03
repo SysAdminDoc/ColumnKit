@@ -34,6 +34,15 @@ export function leaves(nodes: LayoutNode[], out: LayoutNode[] = []): LayoutNode[
 export const CORRECTION_MARGIN = 24;
 
 /**
+ * VS Code's editor minimum, `DEFAULT_EDITOR_MIN_DIMENSIONS` in editor.ts.
+ * Applies to text, chat, webview, custom, terminal, notebook and diff panes.
+ */
+export const DEFAULT_FLOOR = 220;
+
+/** SettingsEditor2 overrides the minimum with its own `EDITOR_MIN_WIDTH`. */
+export const SETTINGS_FLOOR = 500;
+
+/**
  * Editor area width in CSS pixels, or undefined when the layout cannot say.
  *
  * Top-level sizes are measured along the layout's own axis: with orientation 0
@@ -184,14 +193,22 @@ export function isFlat(nodes: LayoutNode[]): boolean {
  */
 export function correctFloor(
     sizes: number[],
-    floor: number
+    floor: number | number[]
 ): Correction | undefined {
     if (sizes.length < 2) {
         return undefined;
     }
-    const target = floor + CORRECTION_MARGIN;
+    // The floor is a property of whatever pane a group is showing, not a global
+    // constant: a Settings tab asks for 500 where a chat panel asks for 220.
+    // Callers that genuinely have one floor for every group still pass a number.
+    const floors = typeof floor === 'number' ? sizes.map(() => floor) : floor;
+    if (floors.length !== sizes.length) {
+        return undefined;
+    }
+    const targets = floors.map(f => f + CORRECTION_MARGIN);
+
     const needy = sizes
-        .map((size, i) => ({ i, deficit: size <= floor ? target - size : 0 }))
+        .map((size, i) => ({ i, deficit: size <= floors[i] ? targets[i] - size : 0 }))
         .filter(n => n.deficit > 0);
     if (needy.length === 0) {
         return undefined;
@@ -199,7 +216,7 @@ export function correctFloor(
 
     const needed = needy.reduce((sum, n) => sum + n.deficit, 0);
     const donors = sizes
-        .map((size, i) => ({ i, spare: size > target ? size - target : 0 }))
+        .map((size, i) => ({ i, spare: size > targets[i] ? size - targets[i] : 0 }))
         .filter(d => d.spare > 0);
     const available = donors.reduce((sum, d) => sum + d.spare, 0);
     if (available < needed) {
@@ -208,7 +225,7 @@ export function correctFloor(
 
     const next = sizes.slice();
     for (const n of needy) {
-        next[n.i] = target;
+        next[n.i] = targets[n.i];
     }
 
     let remaining = needed;
@@ -226,7 +243,7 @@ export function correctFloor(
 
     // Total must be preserved exactly, or the write rescales the editor area.
     if (remaining !== 0) {
-        const slack = donors.find(d => next[d.i] - remaining >= target);
+        const slack = donors.find(d => next[d.i] - remaining >= targets[d.i]);
         if (!slack) {
             return undefined;
         }

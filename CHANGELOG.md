@@ -9,7 +9,11 @@
 - The warning about columns landing on the minimum width is now measured from the real editor area instead of an assumed 1920px screen. It used to warn about layouts that fit fine on a wide monitor, and stay quiet about ones that didn't fit in a small window.
 - `RESEARCH.md` and `ROADMAP.md` were being packaged into the published `.vsix`. They are now excluded.
 
+### Removed
+- The `columnkit.minGroupWidth` setting. The minimum is a property of the pane in the column, not a number you can pick, so it is now read per column instead of configured.
+
 ### Changed
+- The Settings editor asks for a 500px minimum rather than the usual 220, so it was expanding on click even with the guard on. Each column is now measured against the floor its own pane asks for.
 - ColumnKit now adds one status bar button instead of five. Clicking it still evens the columns; hovering it gives you the column-count presets, the picker and undo, each a single click. Set `columnkit.statusBarPresets` to get the numbered buttons back as permanent items.
 
 ### Added

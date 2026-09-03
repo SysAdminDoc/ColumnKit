@@ -106,11 +106,6 @@
           "default": false,
           "description": "Also show an Even Out Columns icon in each editor group's title bar. Off by default because narrow columns push it into the overflow menu."
         },
-        "columnkit.minGroupWidth": {
-          "type": "integer",
-          "default": 220,
-          "description": "VS Code's hardcoded editor group minimum width, used to warn when a requested column count cannot fit above the floor. Only change this if a future VS Code build changes the constant."
-        },
         "columnkit.autoCorrect": {
           "type": "boolean",
           "default": true,

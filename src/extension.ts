@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import {
+    DEFAULT_FLOOR,
     EditorLayout,
     LayoutHistory,
+    SETTINGS_FLOOR,
     correctFloor,
     describeColumnChange,
     floorRisk,
@@ -51,8 +53,43 @@ async function readLayout(): Promise<EditorLayout | undefined> {
  * rather than silently handing the user the behaviour they are trying to avoid.
  */
 function assessFloorRisk(previous: EditorLayout | undefined, columns: number): boolean {
-    const floor = config().get<number>('minGroupWidth', 220);
-    return floorRisk(previous && measureEditorWidth(previous, floor), columns, floor);
+    // The warning is about ordinary editors. A wider pane like Settings raises
+    // the bar further, but it will not be in every column after a split.
+    return floorRisk(
+        previous && measureEditorWidth(previous, DEFAULT_FLOOR),
+        columns,
+        DEFAULT_FLOOR
+    );
+}
+
+/**
+ * The minimum width the pane in this column asks for.
+ *
+ * VS Code compares a group against its own active pane's `minimumWidth`, not a
+ * global constant, so a Settings tab arms the expand at 500 where a chat panel
+ * arms it at 220. The Settings editor has no `TabInput` class of its own, which
+ * leaves its label as the only signal an extension gets.
+ */
+function floorForTab(tab: vscode.Tab | undefined): number {
+    if (tab && tab.input === undefined && tab.label === 'Settings') {
+        return SETTINGS_FLOOR;
+    }
+    return DEFAULT_FLOOR;
+}
+
+/**
+ * A floor per layout leaf, in grid order.
+ *
+ * Leaves are indexed the way ViewColumn is, so groups are matched on
+ * `viewColumn` rather than on their position in `tabGroups.all`, which is
+ * creation order and disagrees as soon as anything is split to the left.
+ */
+function floorsForColumns(count: number): number[] {
+    const byColumn = new Map<number, vscode.TabGroup>();
+    for (const group of vscode.window.tabGroups.all) {
+        byColumn.set(group.viewColumn, group);
+    }
+    return Array.from({ length: count }, (_, i) => floorForTab(byColumn.get(i + 1)?.activeTab));
 }
 
 /** User-initiated layout changes only. Floor corrections never land here. */
@@ -421,8 +458,8 @@ class FloorGuard {
                 return false;
             }
 
-            const floor = config().get<number>('minGroupWidth', 220);
             const sizes = layout.groups.map(n => n.size ?? 0);
+            const floors = floorsForColumns(sizes.length);
 
             // A group created moments ago reports the raw weight it was written
             // with until the grid lays it out, so a read straight after a write
@@ -432,7 +469,7 @@ class FloorGuard {
                 return false;
             }
 
-            const correction = correctFloor(sizes, floor);
+            const correction = correctFloor(sizes, floors);
             if (!correction) {
                 return false;
             }

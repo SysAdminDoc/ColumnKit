@@ -7,4 +7,8 @@ out/**/*.map
 tsconfig.json
 CLAUDE.md
 CODEX_CHANGELOG.md
+RESEARCH.md
+ROADMAP.md
+Roadmap_Blocked.md
 .claude/**
+dist/**

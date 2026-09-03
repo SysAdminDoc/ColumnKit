@@ -9,6 +9,9 @@
 - The warning about columns landing on the minimum width is now measured from the real editor area instead of an assumed 1920px screen. It used to warn about layouts that fit fine on a wide monitor, and stay quiet about ones that didn't fit in a small window.
 - `RESEARCH.md` and `ROADMAP.md` were being packaged into the published `.vsix`. They are now excluded.
 
+### Changed
+- ColumnKit now adds one status bar button instead of five. Clicking it still evens the columns; hovering it gives you the column-count presets, the picker and undo, each a single click. Set `columnkit.statusBarPresets` to get the numbered buttons back as permanent items.
+
 ### Added
 - Layout undo. `ColumnKit: Undo Layout Change` puts back the geometry from before the last column change, and the picker offers it too. Automatic floor corrections are left out of the history, so undo always lands on something you did.
 - Extension test suite (`npm test`), with a probe that pins down how `vscode.getEditorLayout` denominates group sizes.

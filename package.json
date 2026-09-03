@@ -89,12 +89,8 @@
             "minimum": 1,
             "maximum": 12
           },
-          "default": [
-            4,
-            6,
-            8
-          ],
-          "description": "Column-count buttons to show in the status bar. Set to [] to show only the Even and picker buttons."
+          "default": [],
+          "description": "Extra column-count buttons to show in the status bar beside the Even button. Empty by default: the same presets are one click away in the Even button hover menu. Setting this also brings back the picker button."
         },
         "columnkit.statusBarAlignment": {
           "type": "string",

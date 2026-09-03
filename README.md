@@ -23,22 +23,22 @@ ColumnKit gives you a one-click way back to an even layout that sits well clear 
 
 ## Buttons
 
-They appear in the status bar, so the status bar has to be visible.
+One button, in the status bar, so the status bar has to be visible.
 
-| Button | What it does |
-|---|---|
-| `Even` | Distributes width across every open column and leaves the column count alone. This is the safe one. |
-| `4` `6` `8` | Snaps to that many equal columns. |
-| Layout icon | Opens a picker for any count from 1 to 12. |
+Clicking `Even` distributes width across every open column and leaves the column count alone. That is the everyday one, and it can never lose an arrangement.
 
-The numbered buttons change how many columns exist. Ask for fewer than you have open and the surplus columns' tabs get merged into the last one. Ask for more and you get empty columns. Nothing is closed and no editor is lost, but the arrangement does change. `Even` never touches the count.
+Hover it and you get the rest: jump straight to 2, 3, 4, 6 or 8 columns, pick any count from 1 to 12, or undo the last layout change. Each is a single click.
+
+The numbered actions change how many columns exist. Ask for fewer than you have open and the surplus columns' tabs get merged into the last one. Ask for more and you get empty columns. Nothing is closed and no editor is lost, but the arrangement does change, which is what undo is for.
+
+If you would rather have the numbers as permanent buttons instead of a hover menu, set `columnkit.statusBarPresets`.
 
 ## Settings
 
 | Setting | Default | Purpose |
 |---|---|---|
 | `columnkit.autoCorrect` | `true` | Raises the active column clear of the 220px floor as it becomes active, so the expand-on-click never fires. Turn it off for stock behaviour. |
-| `columnkit.statusBarPresets` | `[4, 6, 8]` | Which numbered buttons to show. Set it to `[]` for just `Even` and the picker. |
+| `columnkit.statusBarPresets` | `[]` | Extra numbered buttons beside `Even`. Empty by default, because the same counts are one click away in the hover menu. Setting it also brings back the picker button. |
 | `columnkit.statusBarAlignment` | `left` | Which end of the status bar the buttons sit on. |
 | `columnkit.showEditorTitleButton` | `false` | Adds an `Even` icon to each editor group's title bar. Off by default, because a narrow column pushes it straight into the overflow menu where it stops being one click. |
 | `columnkit.minGroupWidth` | `220` | The constant used to warn when a column count can't fit above the floor. Leave it alone unless a future VS Code build changes the value. |

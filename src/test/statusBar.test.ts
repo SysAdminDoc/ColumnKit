@@ -16,10 +16,68 @@ async function api(): Promise<ColumnKitApi> {
 }
 
 suite('status bar accessibility', () => {
-    test('contributes the default set of items', async () => {
+    test('contributes exactly one item by default', async () => {
+        // CK-8. VS Code's status bar guidance is one entry unless more are
+        // necessary; the presets live in this one's hover menu instead.
         const items = (await api()).statusBar.contributed;
-        // Even, the three default presets, and the picker.
-        assert.strictEqual(items.length, 5, `unexpected item set: ${items.map(i => i.text).join(', ')}`);
+        assert.strictEqual(items.length, 1, `unexpected item set: ${items.map(i => i.text).join(', ')}`);
+        assert.strictEqual(items[0].command, 'columnkit.even', 'clicking the item should even the columns');
+    });
+
+    test('the single item carries a hover menu reaching the presets and picker', async () => {
+        const tooltip = (await api()).statusBar.contributed[0].tooltip;
+        assert.ok(
+            tooltip instanceof vscode.MarkdownString,
+            'the menu has to be markdown for its command links to render'
+        );
+        assert.strictEqual(tooltip.isTrusted, true, 'command links are inert without isTrusted');
+        for (const command of ['columnkit.columns4', 'columnkit.pickColumns', 'columnkit.undoLayout']) {
+            assert.ok(
+                tooltip.value.includes(`command:${command}`),
+                `hover menu does not reach ${command}`
+            );
+        }
+    });
+
+    test('separate buttons come back when statusBarPresets is set', async () => {
+        const cfg = () => vscode.workspace.getConfiguration('columnkit');
+        await cfg().update('statusBarPresets', [4, 6, 8], vscode.ConfigurationTarget.Global);
+        try {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            const items = (await api()).statusBar.contributed;
+            // Even, three presets, and the picker.
+            assert.strictEqual(items.length, 5, `got: ${items.map(i => i.text).join(', ')}`);
+            assert.deepStrictEqual(
+                items.map(i => i.command),
+                [
+                    'columnkit.even',
+                    'columnkit.columns4',
+                    'columnkit.columns6',
+                    'columnkit.columns8',
+                    'columnkit.pickColumns'
+                ]
+            );
+        } finally {
+            await cfg().update('statusBarPresets', undefined, vscode.ConfigurationTarget.Global);
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+    });
+
+    test('ignores preset values outside the supported range', async () => {
+        const cfg = () => vscode.workspace.getConfiguration('columnkit');
+        await cfg().update('statusBarPresets', [0, 4, 13, 2.5], vscode.ConfigurationTarget.Global);
+        try {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            const commands = (await api()).statusBar.contributed.map(i => i.command);
+            assert.deepStrictEqual(commands, [
+                'columnkit.even',
+                'columnkit.columns4',
+                'columnkit.pickColumns'
+            ]);
+        } finally {
+            await cfg().update('statusBarPresets', undefined, vscode.ConfigurationTarget.Global);
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
     });
 
     test('every item carries a name and an accessible label', async () => {
@@ -99,7 +157,7 @@ suite('status bar lifetime', () => {
             );
             assert.strictEqual(
                 columnKit.statusBar.contributed.length,
-                5,
+                1,
                 'the item set should be unchanged after rebuilding'
             );
         } finally {

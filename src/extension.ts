@@ -208,7 +208,13 @@ class StatusBar {
     private add(
         alignment: vscode.StatusBarAlignment,
         priority: number,
-        spec: { text: string; name: string; label: string; tooltip: string; command: string }
+        spec: {
+            text: string;
+            name: string;
+            label: string;
+            tooltip: string | vscode.MarkdownString;
+            command: string;
+        }
     ): void {
         const item = vscode.window.createStatusBarItem(alignment, priority);
         item.text = spec.text;
@@ -217,6 +223,26 @@ class StatusBar {
         item.tooltip = spec.tooltip;
         item.command = spec.command;
         this.items.push(item);
+    }
+
+    /**
+     * The hover menu on the single default item.
+     *
+     * VS Code gives a status bar item one command and no secondary click, but a
+     * trusted MarkdownString tooltip renders command links that activate on a
+     * single click. That is how the presets and the picker stay one click away
+     * without contributing four more items.
+     */
+    private menu(): vscode.MarkdownString {
+        const menu = new vscode.MarkdownString(
+            'Even out every open column, keeping the count as-is.\n\n' +
+            [2, 3, 4, 6, 8].map(n => `[${n} columns](command:columnkit.columns${n})`).join(' · ') +
+            '\n\n[Choose a count...](command:columnkit.pickColumns)' +
+            ' · [Undo layout change](command:columnkit.undoLayout)'
+        );
+        // Command links are inert without this.
+        menu.isTrusted = true;
+        return menu;
     }
 
     rebuild(): void {
@@ -231,18 +257,22 @@ class StatusBar {
         // Higher priority keeps the group together and to the outside edge.
         let priority = 1000;
 
+        const presets = cfg
+            .get<number[]>('statusBarPresets', [])
+            .filter(n => Number.isInteger(n) && n >= 1 && n <= 12);
+
+        // One item by default. VS Code's own status bar guidance is to
+        // contribute a single entry unless more are necessary, and the presets
+        // stay reachable through this one's hover menu.
         this.add(alignment, priority--, {
             text: '$(split-horizontal) Even',
             name: 'ColumnKit: Even Out Columns',
             label: 'Even out editor columns',
-            tooltip: 'ColumnKit: even out every open column, keeping the count as-is',
+            tooltip: this.menu(),
             command: 'columnkit.even'
         });
 
-        for (const n of cfg.get<number[]>('statusBarPresets', [4, 6, 8])) {
-            if (!Number.isInteger(n) || n < 1 || n > 12) {
-                continue;
-            }
+        for (const n of presets) {
             this.add(alignment, priority--, {
                 text: `${n}`,
                 name: `ColumnKit: ${n} Columns`,
@@ -252,13 +282,17 @@ class StatusBar {
             });
         }
 
-        this.add(alignment, priority--, {
-            text: '$(layout)',
-            name: 'ColumnKit: Column Count Picker',
-            label: 'Choose editor column count',
-            tooltip: 'ColumnKit: pick a column count',
-            command: 'columnkit.pickColumns'
-        });
+        // Only alongside the numbered buttons. On its own the picker duplicates
+        // what the hover menu already offers.
+        if (presets.length > 0) {
+            this.add(alignment, priority--, {
+                text: '$(layout)',
+                name: 'ColumnKit: Column Count Picker',
+                label: 'Choose editor column count',
+                tooltip: 'ColumnKit: pick a column count',
+                command: 'columnkit.pickColumns'
+            });
+        }
 
         for (const item of this.items) {
             item.show();

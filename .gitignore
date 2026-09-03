@@ -1,0 +1,9 @@
+node_modules/
+out/
+dist/
+*.vsix
+*.tsbuildinfo
+
+CLAUDE.md
+CODEX_CHANGELOG.md
+.claude/

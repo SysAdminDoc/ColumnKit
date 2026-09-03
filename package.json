@@ -1,0 +1,127 @@
+{
+  "name": "columnkit",
+  "displayName": "ColumnKit",
+  "description": "One-click buttons for even editor columns and fixed column counts.",
+  "version": "0.1.0",
+  "publisher": "SysAdminDoc",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SysAdminDoc/ColumnKit.git"
+  },
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "columnkit.even",
+        "title": "Even Out Columns",
+        "category": "ColumnKit",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "columnkit.pickColumns",
+        "title": "Set Column Count...",
+        "category": "ColumnKit",
+        "icon": "$(layout)"
+      },
+      {
+        "command": "columnkit.columns2",
+        "title": "2 Columns",
+        "category": "ColumnKit"
+      },
+      {
+        "command": "columnkit.columns3",
+        "title": "3 Columns",
+        "category": "ColumnKit"
+      },
+      {
+        "command": "columnkit.columns4",
+        "title": "4 Columns",
+        "category": "ColumnKit"
+      },
+      {
+        "command": "columnkit.columns5",
+        "title": "5 Columns",
+        "category": "ColumnKit"
+      },
+      {
+        "command": "columnkit.columns6",
+        "title": "6 Columns",
+        "category": "ColumnKit"
+      },
+      {
+        "command": "columnkit.columns8",
+        "title": "8 Columns",
+        "category": "ColumnKit"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "columnkit.even",
+          "group": "navigation@99",
+          "when": "config.columnkit.showEditorTitleButton"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ColumnKit",
+      "properties": {
+        "columnkit.statusBarPresets": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12
+          },
+          "default": [
+            4,
+            6,
+            8
+          ],
+          "description": "Column-count buttons to show in the status bar. Set to [] to show only the Even and picker buttons."
+        },
+        "columnkit.statusBarAlignment": {
+          "type": "string",
+          "enum": [
+            "left",
+            "right"
+          ],
+          "default": "left",
+          "description": "Which side of the status bar the ColumnKit buttons sit on."
+        },
+        "columnkit.showEditorTitleButton": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also show an Even Out Columns icon in each editor group's title bar. Off by default because narrow columns push it into the overflow menu."
+        },
+        "columnkit.minGroupWidth": {
+          "type": "integer",
+          "default": 220,
+          "description": "VS Code's hardcoded editor group minimum width, used to warn when a requested column count cannot fit above the floor. Only change this if a future VS Code build changes the constant."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --out dist/columnkit-0.1.0.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.100.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.6.0"
+  }
+}

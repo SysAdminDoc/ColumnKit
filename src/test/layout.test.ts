@@ -1,5 +1,46 @@
 import * as assert from 'assert';
-import { CORRECTION_MARGIN, correctFloor, describeColumnChange, isFlat, leaves } from '../layout';
+import { CORRECTION_MARGIN, LayoutHistory, correctFloor, describeColumnChange, isFlat, leaves } from '../layout';
+
+suite('LayoutHistory', () => {
+    const layout = (n: number) => ({ orientation: 0 as const, groups: [{ size: n }] });
+
+    test('returns the most recent layout first', () => {
+        const history = new LayoutHistory();
+        history.record(layout(1));
+        history.record(layout(2));
+        assert.deepStrictEqual(history.pop(), layout(2));
+        assert.deepStrictEqual(history.pop(), layout(1));
+    });
+
+    test('reports nothing to undo when empty', () => {
+        assert.strictEqual(new LayoutHistory().pop(), undefined);
+        assert.strictEqual(new LayoutHistory().size, 0);
+    });
+
+    test('drops the oldest entry once full rather than growing without bound', () => {
+        const history = new LayoutHistory();
+        for (let i = 0; i < LayoutHistory.MAX + 5; i++) {
+            history.record(layout(i));
+        }
+        assert.strictEqual(history.size, LayoutHistory.MAX);
+        // The newest survives and the oldest five are gone, so the entry left at
+        // the bottom is the sixth one recorded.
+        assert.deepStrictEqual(history.pop(), layout(LayoutHistory.MAX + 4));
+        for (let i = 0; i < LayoutHistory.MAX - 1; i++) {
+            history.pop();
+        }
+        assert.strictEqual(history.size, 0);
+    });
+
+    test('tracks its size as entries go in and out', () => {
+        const history = new LayoutHistory();
+        assert.strictEqual(history.size, 0);
+        history.record(layout(1));
+        assert.strictEqual(history.size, 1);
+        history.pop();
+        assert.strictEqual(history.size, 0);
+    });
+});
 
 suite('leaves', () => {
     test('returns a flat list for a flat layout', () => {

@@ -66,6 +66,34 @@ export function describeColumnChange(change: ColumnChange): string {
     return `ColumnKit: ${outcome}${risk}`;
 }
 
+/**
+ * Bounded history of layouts, newest last.
+ *
+ * Only user-initiated changes are recorded. Automatic floor corrections are
+ * deliberately excluded: they fire on ordinary editor activity and would bury
+ * the last change the user actually made, the way Emacs winner-mode excludes
+ * its boring buffers.
+ */
+export class LayoutHistory {
+    static readonly MAX = 20;
+    private ring: EditorLayout[] = [];
+
+    record(layout: EditorLayout): void {
+        this.ring.push(layout);
+        if (this.ring.length > LayoutHistory.MAX) {
+            this.ring.shift();
+        }
+    }
+
+    pop(): EditorLayout | undefined {
+        return this.ring.pop();
+    }
+
+    get size(): number {
+        return this.ring.length;
+    }
+}
+
 export interface Correction {
     /** Leaf sizes after correction, in the same depth-first order as `leaves`. */
     sizes: number[];

@@ -49,6 +49,7 @@ Everything is in the palette under `ColumnKit`, if you'd rather type than click.
 
 - `ColumnKit: Even Out Columns`
 - `ColumnKit: Set Column Count...`
+- `ColumnKit: Undo Layout Change`
 - `ColumnKit: 2 Columns` through `ColumnKit: 8 Columns`
 
 ## Build

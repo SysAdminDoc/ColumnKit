@@ -34,6 +34,12 @@
         "icon": "$(layout)"
       },
       {
+        "command": "columnkit.undoLayout",
+        "title": "Undo Layout Change",
+        "category": "ColumnKit",
+        "icon": "$(discard)"
+      },
+      {
         "command": "columnkit.columns2",
         "title": "2 Columns",
         "category": "ColumnKit"

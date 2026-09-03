@@ -1,10 +1,18 @@
 import * as vscode from 'vscode';
-import { EditorLayout, correctFloor, describeColumnChange, isFlat } from './layout';
+import { EditorLayout, LayoutHistory, correctFloor, describeColumnChange, isFlat } from './layout';
 
 const CONFIG_SECTION = 'columnkit';
 
 /** Coalesces the burst of activation events VS Code fires when focus moves. */
 const AUTO_CORRECT_DEBOUNCE_MS = 120;
+
+/**
+ * How long the floor guard stands down after an undo.
+ *
+ * Must outlast the debounce plus the write round-trip, because the tab-group
+ * event a layout write produces arrives after the write resolves.
+ */
+const UNDO_SETTLE_MS = 400;
 
 /** Sizes handed to vscode.setEditorLayout are proportions of the editor area. */
 interface EditorGroupLayout {
@@ -43,12 +51,41 @@ function estimateFloorRisk(columns: number): boolean {
     return columns * minWidth > assumedEditorWidth;
 }
 
+/** User-initiated layout changes only. Floor corrections never land here. */
+const history = new LayoutHistory();
+
+/** Set by activate(). Undo needs it to hold corrections off during a restore. */
+let floorGuard: FloorGuard | undefined;
+
+async function remember(): Promise<void> {
+    const layout = await readLayout();
+    if (layout) {
+        history.record(layout);
+    }
+}
+
 async function evenColumns(): Promise<void> {
+    await remember();
     await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
+}
+
+async function undoLayout(): Promise<void> {
+    const previous = history.pop();
+    if (!previous) {
+        vscode.window.setStatusBarMessage('ColumnKit: nothing to undo.', 3000);
+        return;
+    }
+    // The restored geometry is the user's own, and it may legitimately hold a
+    // group on the floor. Stand the guard down first, or its correction would
+    // undo the undo.
+    floorGuard?.suspendFor(UNDO_SETTLE_MS);
+    await vscode.commands.executeCommand('vscode.setEditorLayout', previous);
+    vscode.window.setStatusBarMessage('ColumnKit: layout restored.', 3000);
 }
 
 async function setColumns(columns: number): Promise<void> {
     const before = currentColumnCount();
+    await remember();
     const size = 1 / columns;
     const layout: EditorGroupLayout = {
         orientation: 0,
@@ -80,14 +117,26 @@ async function pickColumns(): Promise<void> {
         });
     }
 
+    // Reached from the status bar picker so undo has an affordance without
+    // adding another permanent status bar item.
+    const UNDO = '$(discard) Undo last layout change';
+    if (history.size > 0) {
+        items.unshift({ label: UNDO, description: `${history.size} step${history.size === 1 ? '' : 's'} available` });
+    }
+
     const choice = await vscode.window.showQuickPick(items, {
         title: 'ColumnKit',
         placeHolder: `Column count (currently ${current})`
     });
 
-    if (choice) {
-        await setColumns(Number(choice.label));
+    if (!choice) {
+        return;
     }
+    if (choice.label === UNDO) {
+        await undoLayout();
+        return;
+    }
+    await setColumns(Number(choice.label));
 }
 
 class StatusBar {
@@ -173,8 +222,25 @@ class FloorGuard {
     /** Corrections applied since activation. Read by the tests. */
     corrections = 0;
 
+    /** Wall-clock deadline before which no correction runs. */
+    private suspendedUntil = 0;
+
+    /** Holds corrections off while a deliberate layout write settles. */
+    suspendFor(ms: number): void {
+        this.suspendedUntil = Date.now() + ms;
+    }
+
+    /** Ends a suspension early. The window is global, so tests must clear it. */
+    resume(): void {
+        this.suspendedUntil = 0;
+    }
+
+    private get suspended(): boolean {
+        return Date.now() < this.suspendedUntil;
+    }
+
     schedule(): void {
-        if (this.disposed || !config().get<boolean>('autoCorrect', true)) {
+        if (this.disposed || this.suspended || !config().get<boolean>('autoCorrect', true)) {
             return;
         }
         if (this.timer) {
@@ -212,9 +278,10 @@ class FloorGuard {
     }
 
     private async correctOnce(): Promise<boolean> {
-        // Re-read the setting here rather than at schedule time, so turning it
-        // off inside the debounce window still cancels the pending correction.
-        if (this.disposed || !config().get<boolean>('autoCorrect', true)) {
+        // Re-read the setting and the suspension here rather than at schedule
+        // time, so turning it off, or starting an undo, inside the debounce
+        // window still cancels an already-scheduled correction.
+        if (this.disposed || this.suspended || !config().get<boolean>('autoCorrect', true)) {
             return false;
         }
         try {
@@ -268,12 +335,14 @@ class FloorGuard {
 
 export interface ColumnKitApi {
     floorGuard: FloorGuard;
+    history: LayoutHistory;
 }
 
 export function activate(context: vscode.ExtensionContext): ColumnKitApi {
     context.subscriptions.push(
         vscode.commands.registerCommand('columnkit.even', evenColumns),
-        vscode.commands.registerCommand('columnkit.pickColumns', pickColumns)
+        vscode.commands.registerCommand('columnkit.pickColumns', pickColumns),
+        vscode.commands.registerCommand('columnkit.undoLayout', undoLayout)
     );
 
     // Preset commands need to exist as real command ids so status bar items and
@@ -289,10 +358,11 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
     statusBar.rebuild();
     context.subscriptions.push({ dispose: () => statusBar.dispose() });
 
-    const floorGuard = new FloorGuard();
+    const guard = new FloorGuard();
+    floorGuard = guard;
     context.subscriptions.push(
-        { dispose: () => floorGuard.dispose() },
-        vscode.window.tabGroups.onDidChangeTabGroups(() => floorGuard.schedule())
+        { dispose: () => guard.dispose() },
+        vscode.window.tabGroups.onDidChangeTabGroups(() => guard.schedule())
     );
 
     context.subscriptions.push(
@@ -308,9 +378,10 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
 
     // There is no API to enumerate status bar items or observe the guard from
     // outside, so the tests reach them through the activation result.
-    return { floorGuard };
+    return { floorGuard: guard, history };
 }
 
 export function deactivate(): void {
+    floorGuard = undefined;
     // Status bar items are disposed through the extension subscriptions.
 }

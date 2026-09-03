@@ -56,6 +56,13 @@ async function api(): Promise<ColumnKitApi> {
 }
 
 suite('FloorGuard', () => {
+    // An undo suspends corrections globally for a few hundred milliseconds, and
+    // the undo suite can run inside that window. Clear it so each test here
+    // starts from an armed guard rather than inheriting another suite's state.
+    setup(async () => {
+        (await api()).floorGuard.resume();
+    });
+
     test('a below-minimum request really does land on the floor', async () => {
         const sizes = await parkOnFloor();
         assert.ok(

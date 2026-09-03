@@ -12,3 +12,7 @@ ROADMAP.md
 Roadmap_Blocked.md
 .claude/**
 dist/**
+.vscode-test/**
+src/test/**
+out/test/**
+.vscode-test.mjs

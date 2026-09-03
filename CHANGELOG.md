@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `RESEARCH.md` and `ROADMAP.md` were being packaged into the published `.vsix`. They are now excluded.
+
+### Added
+- Extension test suite (`npm test`), with a probe that pins down how `vscode.getEditorLayout` denominates group sizes.
+
 ## 0.1.0 - 2026-09-03
 
 Initial release.

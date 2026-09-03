@@ -151,7 +151,14 @@ async function pickColumns(): Promise<void> {
 class StatusBar {
     private items: vscode.StatusBarItem[] = [];
 
-    constructor(private readonly context: vscode.ExtensionContext) { }
+    /**
+     * Registers once, at construction. Pushing each item into the extension's
+     * subscriptions on every rebuild left the old entries behind, so the array
+     * grew for the life of the session every time a setting changed.
+     */
+    constructor(context: vscode.ExtensionContext) {
+        context.subscriptions.push({ dispose: () => this.dispose() });
+    }
 
     /** Read by the tests; there is no API to enumerate status bar items. */
     get contributed(): readonly vscode.StatusBarItem[] {
@@ -226,7 +233,6 @@ class StatusBar {
 
         for (const item of this.items) {
             item.show();
-            this.context.subscriptions.push(item);
         }
     }
 
@@ -382,6 +388,8 @@ export interface ColumnKitApi {
     floorGuard: FloorGuard;
     history: LayoutHistory;
     statusBar: { readonly contributed: readonly vscode.StatusBarItem[] };
+    /** Extension subscription count. Exposed so the tests can watch for leaks. */
+    subscriptionCount(): number;
 }
 
 export function activate(context: vscode.ExtensionContext): ColumnKitApi {
@@ -402,7 +410,6 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
 
     const statusBar = new StatusBar(context);
     statusBar.rebuild();
-    context.subscriptions.push({ dispose: () => statusBar.dispose() });
 
     const guard = new FloorGuard();
     floorGuard = guard;
@@ -424,7 +431,12 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
 
     // There is no API to enumerate status bar items or observe the guard from
     // outside, so the tests reach them through the activation result.
-    return { floorGuard: guard, history, statusBar };
+    return {
+        floorGuard: guard,
+        history,
+        statusBar,
+        subscriptionCount: () => context.subscriptions.length
+    };
 }
 
 export function deactivate(): void {

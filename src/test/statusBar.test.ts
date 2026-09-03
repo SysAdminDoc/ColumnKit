@@ -61,3 +61,42 @@ suite('status bar accessibility', () => {
         assert.strictEqual(new Set(names).size, names.length, `duplicate names: ${names.join(', ')}`);
     });
 });
+
+suite('status bar lifetime', () => {
+    test('rebuilding on a setting change does not grow the subscription list', async function () {
+        // CK-11. Every rebuild used to push its fresh items into the extension's
+        // subscriptions without removing the previous ones.
+        this.timeout(60000);
+        const columnKit = await api();
+        const cfg = () => vscode.workspace.getConfiguration('columnkit');
+
+        // One rebuild first, so the count is measured after any lazy setup.
+        await cfg().update('statusBarAlignment', 'right', vscode.ConfigurationTarget.Global);
+        await new Promise(resolve => setTimeout(resolve, 50));
+        const before = columnKit.subscriptionCount();
+
+        try {
+            for (let i = 0; i < 50; i++) {
+                await cfg().update(
+                    'statusBarAlignment',
+                    i % 2 === 0 ? 'left' : 'right',
+                    vscode.ConfigurationTarget.Global
+                );
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            assert.strictEqual(
+                columnKit.subscriptionCount(),
+                before,
+                'subscriptions grew across 50 rebuilds'
+            );
+            assert.strictEqual(
+                columnKit.statusBar.contributed.length,
+                5,
+                'the item set should be unchanged after rebuilding'
+            );
+        } finally {
+            await cfg().update('statusBarAlignment', undefined, vscode.ConfigurationTarget.Global);
+        }
+    });
+});

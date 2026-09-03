@@ -9,6 +9,7 @@ import {
     floorRisk,
     isFlat,
     leaves,
+    maxColumns,
     measureEditorWidth
 } from '../layout';
 
@@ -296,6 +297,42 @@ suite('floorRisk', () => {
     });
 });
 
+suite('maxColumns', () => {
+    const floor = 220;
+
+    test('stops one short of an exact multiple, which floors every column', () => {
+        // 880 / 4 = 220 exactly, and equality is what arms the expand.
+        assert.strictEqual(maxColumns(880, floor), 3);
+    });
+
+    test('allows the largest count that stays clear of the floor', () => {
+        // 900 / 4 = 225.
+        assert.strictEqual(maxColumns(900, floor), 4);
+        assert.strictEqual(maxColumns(2752, floor), 12);
+        // 2641 across 12 looks fine on the average and is not: eleven of those
+        // columns land on exactly 220.
+        assert.strictEqual(maxColumns(2641, floor), 11);
+    });
+
+    test('never reports fewer than one column', () => {
+        assert.strictEqual(maxColumns(100, floor), 1);
+    });
+
+    test('reports nothing when the width is unknown', () => {
+        assert.strictEqual(maxColumns(undefined, floor), undefined);
+    });
+
+    test('agrees with floorRisk at every count', () => {
+        // The cap and the warning must not disagree, or the extension would warn
+        // about a layout it just chose, or cap without warning.
+        for (const width of [640, 852, 880, 900, 1280, 2641, 2752]) {
+            const fits = maxColumns(width, floor)!;
+            assert.strictEqual(floorRisk(width, fits, floor), false, `${width} at ${fits}`);
+            assert.strictEqual(floorRisk(width, fits + 1, floor), true, `${width} at ${fits + 1}`);
+        }
+    });
+});
+
 suite('isFlat', () => {
     test('accepts a flat layout', () => {
         assert.strictEqual(isFlat([{ size: 1 }, { size: 2 }]), true);
@@ -324,6 +361,17 @@ suite('describeColumnChange', () => {
         const msg = describeColumnChange({ columns: 2, before: 6, floorRisk: true });
         assert.match(msg, /4 columns merged into the last one/, 'merge fact lost');
         assert.match(msg, /minimum width/, 'floor-risk fact lost');
+    });
+
+    test('explains a capped request instead of silently delivering fewer', () => {
+        const msg = describeColumnChange({ columns: 3, before: 2, floorRisk: false, requested: 8 });
+        assert.match(msg, /8 columns will not fit/);
+        assert.match(msg, /you have 3/);
+    });
+
+    test('says nothing about capping when the request was honoured', () => {
+        const msg = describeColumnChange({ columns: 4, before: 2, floorRisk: false, requested: 4 });
+        assert.ok(!/will not fit/.test(msg), `unexpected cap notice: ${msg}`);
     });
 
     test('reports added empty columns', () => {

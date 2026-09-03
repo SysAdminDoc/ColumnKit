@@ -78,6 +78,25 @@ export function measureEditorWidth(layout: EditorLayout, floor: number): number 
 }
 
 /**
+ * The most equal columns `editorWidth` can hold with every one of them clear of
+ * the floor, or undefined when the width is unknown.
+ *
+ * An exact multiple of the floor is one column too many: it lands every column
+ * on the floor, which is the value that arms the expand.
+ */
+export function maxColumns(editorWidth: number | undefined, floor: number): number | undefined {
+    if (editorWidth === undefined) {
+        return undefined;
+    }
+    // Every column has to reach floor + 1 whole pixels, so the count is bounded
+    // by width / (floor + 1). Deriving it from width / floor instead is a
+    // continuous approximation that disagrees with the integer split: 2641px
+    // across 12 averages 220.08, which looks clear, while the real distribution
+    // is eleven columns at 220 and one at 221.
+    return Math.max(1, Math.floor(editorWidth / (floor + 1)));
+}
+
+/**
  * Whether splitting `editorWidth` into `columns` leaves them on or under the
  * floor, which is the width that arms VS Code's expand-on-click.
  *
@@ -106,6 +125,8 @@ export interface ColumnChange {
     before: number;
     /** Whether the result may leave columns on the minimum-width floor. */
     floorRisk: boolean;
+    /** Set only when the request was capped, to the count originally asked for. */
+    requested?: number;
 }
 
 /**
@@ -116,8 +137,15 @@ export interface ColumnChange {
  * notice was destroyed in exactly the case that carried both.
  */
 export function describeColumnChange(change: ColumnChange): string {
-    const { columns, before, floorRisk } = change;
+    const { columns, before, floorRisk, requested } = change;
     const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+    if (requested !== undefined && requested !== columns) {
+        return (
+            `ColumnKit: ${requested} columns will not fit above the minimum width, ` +
+            `so you have ${columns}. Any more would land every column on the floor and expand on click.`
+        );
+    }
 
     let outcome: string;
     if (columns < before) {

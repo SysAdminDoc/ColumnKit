@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Fixed
+- Asking for more columns than the window can hold no longer parks every one of them on the minimum width, which is the exact state that makes columns expand on click. The count is capped at what fits and the message says so.
+- The message after a column change reports what the editor actually did rather than what was asked for, and counts only the window it wrote to. With a floating window open it used to count the groups in both.
 - Changing a ColumnKit setting used to leak a handle on every rebuild of the status bar buttons, so the list grew for as long as the window stayed open.
 - `npm run package` names the .vsix from the version in `package.json` instead of a hardcoded 0.1.0, so a version bump no longer produces a misnamed file.
 - Screen readers announced the buttons as "split-horizontal Even" and, for the presets, just a number. Every button now has a spoken label that says what it does, and a name so you can find it again in the status bar menu after hiding it.

@@ -8,6 +8,8 @@ import {
     describeColumnChange,
     floorRisk,
     isFlat,
+    leaves,
+    maxColumns,
     measureEditorWidth
 } from './layout';
 
@@ -154,13 +156,25 @@ async function undoLayout(): Promise<void> {
 }
 
 async function setColumns(columns: number): Promise<void> {
-    const before = currentColumnCount();
-    // One read serves both the undo ring and the width measurement.
+    // One read serves the undo ring, the width measurement and the before-count.
     const previous = await remember();
-    const size = 1 / columns;
+    // Counted from the layout rather than from tabGroups.all, which spans every
+    // editor part including auxiliary windows while setEditorLayout only ever
+    // writes to the active one.
+    const before = previous ? leaves(previous.groups).length : currentColumnCount();
+
+    // Asking for more columns than fit puts every one of them on the floor, and
+    // correctFloor cannot rescue that: with nothing above the floor there is no
+    // donor to take space from. The preset buttons could create exactly the
+    // state this extension exists to prevent, so cap the request instead.
+    const fits = maxColumns(previous && measureEditorWidth(previous, DEFAULT_FLOOR), DEFAULT_FLOOR);
+    const capped = fits !== undefined && columns > fits;
+    const wanted = capped ? fits : columns;
+
+    const size = 1 / wanted;
     const layout: EditorGroupLayout = {
         orientation: 0,
-        groups: Array.from({ length: columns }, () => ({ size }))
+        groups: Array.from({ length: wanted }, () => ({ size }))
     };
 
     // Hold the guard off across the write. Both paths read the layout and then
@@ -177,8 +191,20 @@ async function setColumns(columns: number): Promise<void> {
     }
     floorGuard?.suspendFor(UNDO_SETTLE_MS);
 
+    // Report what the editor actually did, not what was asked for. A merge can
+    // be refused and a count can come back different; describing the request
+    // would make the message a guess.
+    const applied = await readLayout();
+    const after = applied ? leaves(applied.groups).length : wanted;
+    log?.trace(`column count ${before} -> ${after} (requested ${columns}, wrote ${wanted})`);
+
     vscode.window.setStatusBarMessage(
-        describeColumnChange({ columns, before, floorRisk: assessFloorRisk(previous, columns) }),
+        describeColumnChange({
+            columns: after,
+            before,
+            floorRisk: assessFloorRisk(previous, after),
+            requested: capped ? columns : undefined
+        }),
         6000
     );
 }

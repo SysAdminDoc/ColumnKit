@@ -108,6 +108,34 @@ let floorGuard: FloorGuard | undefined;
  */
 let log: vscode.LogOutputChannel | undefined;
 
+export type NotifyChannel = 'statusBar' | 'notification';
+
+/** Set by notify(). The tests cannot observe either channel from outside. */
+let lastNotification: { message: string; channel: NotifyChannel } | undefined;
+
+/**
+ * Says something to the user through a channel they can actually perceive.
+ *
+ * The status bar is rendered `role="status"` with `aria-live="off"`, so a
+ * screen reader announces nothing that appears there, and setting
+ * `accessibilityInformation` on an item suppresses the tooltip append too.
+ * Notifications are announced: VS Code pushes every one through an ARIA alert.
+ * So when the editor is in screen reader mode the outcome goes to a
+ * notification with no buttons, which is a toast rather than a prompt.
+ */
+function notify(message: string, timeout = 6000): void {
+    const screenReader =
+        vscode.workspace.getConfiguration('editor').get<string>('accessibilitySupport') === 'on';
+    lastNotification = { message, channel: screenReader ? 'notification' : 'statusBar' };
+    log?.trace(`notify (${lastNotification.channel}): ${message}`);
+
+    if (screenReader) {
+        void vscode.window.showInformationMessage(message);
+    } else {
+        vscode.window.setStatusBarMessage(message, timeout);
+    }
+}
+
 async function remember(): Promise<EditorLayout | undefined> {
     const layout = await readLayout();
     if (layout) {
@@ -123,7 +151,7 @@ async function evenColumns(): Promise<void> {
         await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
     } catch {
         history.pop();
-        vscode.window.setStatusBarMessage('ColumnKit: could not even out the columns.', 3000);
+        notify('ColumnKit: could not even out the columns.', 3000);
         return;
     }
     floorGuard?.suspendFor(UNDO_SETTLE_MS);
@@ -132,7 +160,7 @@ async function evenColumns(): Promise<void> {
 async function undoLayout(): Promise<void> {
     const previous = history.pop();
     if (!previous) {
-        vscode.window.setStatusBarMessage('ColumnKit: nothing to undo.', 3000);
+        notify('ColumnKit: nothing to undo.', 3000);
         return;
     }
     // The restored geometry is the user's own, and it may legitimately hold a
@@ -145,14 +173,14 @@ async function undoLayout(): Promise<void> {
         // The entry was already off the ring. Put it back rather than losing a
         // step to a write that never landed, and do not claim a restore.
         history.record(previous);
-        vscode.window.setStatusBarMessage('ColumnKit: could not restore the layout.', 3000);
+        notify('ColumnKit: could not restore the layout.', 3000);
         return;
     }
     // Re-arm from the moment the write actually landed. The window opened above
     // has been funding the write's own round-trip, and the tab-group event it
     // produces does not arrive until afterwards.
     floorGuard?.suspendFor(UNDO_SETTLE_MS);
-    vscode.window.setStatusBarMessage('ColumnKit: layout restored.', 3000);
+    notify('ColumnKit: layout restored.', 3000);
 }
 
 async function setColumns(columns: number): Promise<void> {
@@ -186,7 +214,7 @@ async function setColumns(columns: number): Promise<void> {
     } catch {
         // Nothing changed, so the entry recorded above would be a phantom step.
         history.pop();
-        vscode.window.setStatusBarMessage('ColumnKit: could not change the column count.', 3000);
+        notify('ColumnKit: could not change the column count.', 3000);
         return;
     }
     floorGuard?.suspendFor(UNDO_SETTLE_MS);
@@ -198,14 +226,13 @@ async function setColumns(columns: number): Promise<void> {
     const after = applied ? leaves(applied.groups).length : wanted;
     log?.trace(`column count ${before} -> ${after} (requested ${columns}, wrote ${wanted})`);
 
-    vscode.window.setStatusBarMessage(
+    notify(
         describeColumnChange({
             columns: after,
             before,
             floorRisk: assessFloorRisk(previous, after),
             requested: capped ? columns : undefined
-        }),
-        6000
+        })
     );
 }
 
@@ -538,6 +565,8 @@ export interface ColumnKitApi {
     history: LayoutHistory;
     statusBar: { readonly contributed: readonly vscode.StatusBarItem[] };
     log: vscode.LogOutputChannel;
+    /** The message notify() last sent and where it sent it. */
+    lastNotification(): { message: string; channel: NotifyChannel } | undefined;
     /** How long activate() took, in milliseconds. Reported in the log. */
     activationMs: number;
     /** Extension subscription count. Exposed so the tests can watch for leaks. */
@@ -597,6 +626,7 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
         statusBar,
         log,
         activationMs,
+        lastNotification: () => lastNotification,
         subscriptionCount: () => context.subscriptions.length
     };
 }
@@ -604,6 +634,7 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
 export function deactivate(): void {
     floorGuard = undefined;
     log = undefined;
+    lastNotification = undefined;
     // Module state outlives the extension host's activation, so a second
     // activation would otherwise inherit the previous session's undo stack.
     history.clear();

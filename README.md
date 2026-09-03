@@ -65,6 +65,10 @@ That drops a `.vsix` in `dist/`, named for the version in `package.json`. Instal
 code --install-extension dist/columnkit-*.vsix
 ```
 
+## Screen readers
+
+VS Code marks the status bar as a region screen readers ignore, so messages posted there are never read out. Turn on `editor.accessibilitySupport` and ColumnKit sends its outcomes as notifications instead, which do get announced. Nothing to configure in ColumnKit itself.
+
 ## When it misbehaves
 
 ColumnKit writes to its own output channel. Open the Output panel and pick `ColumnKit` from the dropdown. It is quiet unless something happens, and every automatic correction is logged at trace level with the widths before and after, so run `Developer: Set Log Level`, choose ColumnKit, and pick Trace to see them. There is no setting to remember, and nothing is logged anywhere else.

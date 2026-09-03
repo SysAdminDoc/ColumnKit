@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
+import { EditorLayout, correctFloor, leaves } from './layout';
 
 const CONFIG_SECTION = 'columnkit';
+
+/** Coalesces the burst of activation events VS Code fires when focus moves. */
+const AUTO_CORRECT_DEBOUNCE_MS = 120;
 
 /** Sizes handed to vscode.setEditorLayout are proportions of the editor area. */
 interface EditorGroupLayout {
@@ -14,6 +18,14 @@ function config() {
 
 function currentColumnCount(): number {
     return vscode.window.tabGroups.all.length;
+}
+
+async function readLayout(): Promise<EditorLayout | undefined> {
+    try {
+        return await vscode.commands.executeCommand<EditorLayout>('vscode.getEditorLayout');
+    } catch {
+        return undefined;
+    }
 }
 
 /**
@@ -149,7 +161,98 @@ class StatusBar {
     }
 }
 
-export function activate(context: vscode.ExtensionContext): void {
+/**
+ * Keeps the active group off its minimum width.
+ *
+ * VS Code's EditorPart.doRestoreGroup expands a group on activation when
+ * `viewSize.width === group.minimumWidth`. The comparison is strict equality, so
+ * a group one pixel clear of the floor is never touched. Raising the group as it
+ * becomes active prevents the expand instead of undoing it afterwards.
+ *
+ * Driven by onDidChangeTabGroups rather than onDidChangeActiveTextEditor because
+ * the latter only fires for text editors and never for webview panes, which is
+ * what AI chat sessions are.
+ */
+class FloorGuard {
+    private timer: NodeJS.Timeout | undefined;
+    private correcting = false;
+    private disposed = false;
+
+    /** Corrections applied since activation. Read by the tests. */
+    corrections = 0;
+
+    schedule(): void {
+        if (this.disposed || !config().get<boolean>('autoCorrect', true)) {
+            return;
+        }
+        if (this.timer) {
+            clearTimeout(this.timer);
+        }
+        this.timer = setTimeout(() => void this.run(), AUTO_CORRECT_DEBOUNCE_MS);
+    }
+
+    async run(): Promise<boolean> {
+        // A correction changes geometry, which re-enters this same event. Without
+        // this guard the handler would drive itself.
+        if (this.correcting || this.disposed) {
+            return false;
+        }
+        this.correcting = true;
+        try {
+            const layout = await readLayout();
+            if (!layout) {
+                return false;
+            }
+            const nodes = leaves(layout.groups);
+            const groups = vscode.window.tabGroups.all;
+
+            // A mismatch means the leaf order cannot be trusted to line up with
+            // ViewColumn: an auxiliary window is open, or the grid is nested in a
+            // shape this does not model. Documented no-op rather than a guess.
+            if (nodes.length !== groups.length || nodes.length < 2) {
+                return false;
+            }
+
+            const activeIndex = groups.findIndex(g => g.isActive);
+            if (activeIndex < 0) {
+                return false;
+            }
+
+            const floor = config().get<number>('minGroupWidth', 220);
+            const sizes = nodes.map(n => n.size ?? 0);
+            const correction = correctFloor(sizes, activeIndex, floor);
+            if (!correction) {
+                return false;
+            }
+
+            await vscode.commands.executeCommand('vscode.setEditorLayout', {
+                orientation: layout.orientation,
+                groups: correction.sizes.map(size => ({ size }))
+            });
+            this.corrections++;
+            return true;
+        } catch {
+            // Never let a layout read or write break focus handling.
+            return false;
+        } finally {
+            this.correcting = false;
+        }
+    }
+
+    dispose(): void {
+        this.disposed = true;
+        if (this.timer) {
+            clearTimeout(this.timer);
+            this.timer = undefined;
+        }
+    }
+}
+
+export interface ColumnKitApi {
+    floorGuard: FloorGuard;
+}
+
+export function activate(context: vscode.ExtensionContext): ColumnKitApi {
     context.subscriptions.push(
         vscode.commands.registerCommand('columnkit.even', evenColumns),
         vscode.commands.registerCommand('columnkit.pickColumns', pickColumns)
@@ -168,6 +271,12 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar.rebuild();
     context.subscriptions.push({ dispose: () => statusBar.dispose() });
 
+    const floorGuard = new FloorGuard();
+    context.subscriptions.push(
+        { dispose: () => floorGuard.dispose() },
+        vscode.window.tabGroups.onDidChangeTabGroups(() => floorGuard.schedule())
+    );
+
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(event => {
             if (
@@ -178,6 +287,10 @@ export function activate(context: vscode.ExtensionContext): void {
             }
         })
     );
+
+    // There is no API to enumerate status bar items or observe the guard from
+    // outside, so the tests reach them through the activation result.
+    return { floorGuard };
 }
 
 export function deactivate(): void {

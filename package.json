@@ -108,6 +108,11 @@
           "type": "integer",
           "default": 220,
           "description": "VS Code's hardcoded editor group minimum width, used to warn when a requested column count cannot fit above the floor. Only change this if a future VS Code build changes the constant."
+        },
+        "columnkit.autoCorrect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep the active editor group clear of its minimum width. VS Code expands a group on click when its width is exactly the minimum, and there is no setting to disable that; this raises the group as it becomes active so the expand never triggers. Turn it off to restore stock behaviour."
         }
       }
     }

@@ -37,6 +37,7 @@ The numbered buttons change how many columns exist. Ask for fewer than you have 
 
 | Setting | Default | Purpose |
 |---|---|---|
+| `columnkit.autoCorrect` | `true` | Raises the active column clear of the 220px floor as it becomes active, so the expand-on-click never fires. Turn it off for stock behaviour. |
 | `columnkit.statusBarPresets` | `[4, 6, 8]` | Which numbered buttons to show. Set it to `[]` for just `Even` and the picker. |
 | `columnkit.statusBarAlignment` | `left` | Which end of the status bar the buttons sit on. |
 | `columnkit.showEditorTitleButton` | `false` | Adds an `Even` icon to each editor group's title bar. Off by default, because a narrow column pushes it straight into the overflow menu where it stops being one click. |

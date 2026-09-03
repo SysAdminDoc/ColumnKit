@@ -44,7 +44,9 @@ export const CORRECTION_MARGIN = 24;
  * Sub-pixel totals mean the grid has not laid out yet and the sizes are still
  * the raw weights they were written with, which are not a measurement.
  */
-export function measureEditorWidth(layout: EditorLayout): number | undefined {
+export function measureEditorWidth(layout: EditorLayout, floor: number): number | undefined {
+    // With orientation 1 every row spans the full editor width, so the first
+    // row that holds a horizontal split reports the same total as any other.
     const across =
         layout.orientation === 0
             ? layout.groups
@@ -54,11 +56,13 @@ export function measureEditorWidth(layout: EditorLayout): number | undefined {
         return undefined;
     }
 
-    // Every size must be a plausible pixel width. Testing the sum instead lets
-    // a set of weights through whenever they happen to add up past the
-    // threshold, and ours always sum to exactly 1.
+    // Every size must be a plausible pixel width, and a laid-out column can
+    // never be narrower than the floor VS Code enforces. Testing the sum
+    // instead lets weights through whenever they happen to add up past the
+    // threshold, and a single-column write is the weight 1 exactly, which
+    // sailed past an earlier `>= 1` rule and reported a 1px editor area.
     const sizes = across.map(n => n.size ?? 0);
-    if (sizes.some(size => size < 1)) {
+    if (sizes.some(size => size < floor)) {
         return undefined;
     }
     return sizes.reduce((total, size) => total + size, 0);
@@ -79,7 +83,11 @@ export function floorRisk(
     if (editorWidth === undefined || columns < 1) {
         return false;
     }
-    return editorWidth / columns <= floor;
+    // An equal split is distributed in whole pixels, so the mean can sit
+    // fractionally above the floor while almost every column lands exactly on
+    // it: 2641 across 12 averages 220.08, and eleven of those columns are 220.
+    // Judge the narrowest column, not the average.
+    return Math.floor(editorWidth / columns) <= floor;
 }
 
 export interface ColumnChange {
@@ -136,6 +144,10 @@ export class LayoutHistory {
 
     pop(): EditorLayout | undefined {
         return this.ring.pop();
+    }
+
+    clear(): void {
+        this.ring = [];
     }
 
     get size(): number {

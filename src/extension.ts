@@ -51,11 +51,8 @@ async function readLayout(): Promise<EditorLayout | undefined> {
  * rather than silently handing the user the behaviour they are trying to avoid.
  */
 function assessFloorRisk(previous: EditorLayout | undefined, columns: number): boolean {
-    return floorRisk(
-        previous && measureEditorWidth(previous),
-        columns,
-        config().get<number>('minGroupWidth', 220)
-    );
+    const floor = config().get<number>('minGroupWidth', 220);
+    return floorRisk(previous && measureEditorWidth(previous, floor), columns, floor);
 }
 
 /** User-initiated layout changes only. Floor corrections never land here. */
@@ -74,7 +71,15 @@ async function remember(): Promise<EditorLayout | undefined> {
 
 async function evenColumns(): Promise<void> {
     await remember();
-    await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
+    floorGuard?.suspendFor(UNDO_SETTLE_MS);
+    try {
+        await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
+    } catch {
+        history.pop();
+        vscode.window.setStatusBarMessage('ColumnKit: could not even out the columns.', 3000);
+        return;
+    }
+    floorGuard?.suspendFor(UNDO_SETTLE_MS);
 }
 
 async function undoLayout(): Promise<void> {
@@ -87,7 +92,19 @@ async function undoLayout(): Promise<void> {
     // group on the floor. Stand the guard down first, or its correction would
     // undo the undo.
     floorGuard?.suspendFor(UNDO_SETTLE_MS);
-    await vscode.commands.executeCommand('vscode.setEditorLayout', previous);
+    try {
+        await vscode.commands.executeCommand('vscode.setEditorLayout', previous);
+    } catch {
+        // The entry was already off the ring. Put it back rather than losing a
+        // step to a write that never landed, and do not claim a restore.
+        history.record(previous);
+        vscode.window.setStatusBarMessage('ColumnKit: could not restore the layout.', 3000);
+        return;
+    }
+    // Re-arm from the moment the write actually landed. The window opened above
+    // has been funding the write's own round-trip, and the tab-group event it
+    // produces does not arrive until afterwards.
+    floorGuard?.suspendFor(UNDO_SETTLE_MS);
     vscode.window.setStatusBarMessage('ColumnKit: layout restored.', 3000);
 }
 
@@ -101,7 +118,19 @@ async function setColumns(columns: number): Promise<void> {
         groups: Array.from({ length: columns }, () => ({ size }))
     };
 
-    await vscode.commands.executeCommand('vscode.setEditorLayout', layout);
+    // Hold the guard off across the write. Both paths read the layout and then
+    // write a new one, and a correction landing in that gap would be computed
+    // from the group count we are in the middle of replacing.
+    floorGuard?.suspendFor(UNDO_SETTLE_MS);
+    try {
+        await vscode.commands.executeCommand('vscode.setEditorLayout', layout);
+    } catch {
+        // Nothing changed, so the entry recorded above would be a phantom step.
+        history.pop();
+        vscode.window.setStatusBarMessage('ColumnKit: could not change the column count.', 3000);
+        return;
+    }
+    floorGuard?.suspendFor(UNDO_SETTLE_MS);
 
     vscode.window.setStatusBarMessage(
         describeColumnChange({ columns, before, floorRisk: assessFloorRisk(previous, columns) }),
@@ -291,13 +320,18 @@ class FloorGuard {
     }
 
     schedule(): void {
-        if (this.disposed || this.suspended || !config().get<boolean>('autoCorrect', true)) {
+        if (this.disposed) {
             return;
         }
         if (this.timer) {
             clearTimeout(this.timer);
         }
-        this.timer = setTimeout(() => void this.run(), AUTO_CORRECT_DEBOUNCE_MS);
+        // Defer past a suspension rather than dropping the event. Returning
+        // early here would discard the only notification we get, and nothing
+        // re-arms when the deadline lapses, so a group floored during an undo
+        // would stay armed until some later, unrelated tab-group change.
+        const held = Math.max(0, this.suspendedUntil - Date.now());
+        this.timer = setTimeout(() => void this.run(), held + AUTO_CORRECT_DEBOUNCE_MS);
     }
 
     async run(): Promise<boolean> {
@@ -329,13 +363,18 @@ class FloorGuard {
     }
 
     private async correctOnce(): Promise<boolean> {
-        // Re-read the setting and the suspension here rather than at schedule
-        // time, so turning it off, or starting an undo, inside the debounce
-        // window still cancels an already-scheduled correction.
-        if (this.disposed || this.suspended || !config().get<boolean>('autoCorrect', true)) {
+        if (this.disposed) {
             return false;
         }
         try {
+            // Read the setting and the suspension here rather than at schedule
+            // time, so turning it off, or starting an undo, inside the debounce
+            // window still cancels an already-scheduled correction. Inside the
+            // try because getConfiguration throws once the host starts tearing
+            // down, and this runs from a timer with nobody to catch it.
+            if (this.suspended || !config().get<boolean>('autoCorrect', true)) {
+                return false;
+            }
             const layout = await readLayout();
             if (!layout || this.disposed) {
                 return false;
@@ -441,5 +480,8 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
 
 export function deactivate(): void {
     floorGuard = undefined;
+    // Module state outlives the extension host's activation, so a second
+    // activation would otherwise inherit the previous session's undo stack.
+    history.clear();
     // Status bar items are disposed through the extension subscriptions.
 }

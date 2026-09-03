@@ -23,7 +23,9 @@ suite('status bar accessibility', () => {
     });
 
     test('every item carries a name and an accessible label', async () => {
-        for (const item of (await api()).statusBar.contributed) {
+        const items = (await api()).statusBar.contributed;
+        assert.ok(items.length > 0, 'no items to check');
+        for (const item of items) {
             assert.ok(item.name, `item ${item.text} has no name`);
             assert.ok(
                 item.accessibilityInformation?.label,
@@ -34,7 +36,9 @@ suite('status bar accessibility', () => {
     });
 
     test('no label leaks codicon markup, which is read aloud verbatim', async () => {
-        for (const item of (await api()).statusBar.contributed) {
+        const items = (await api()).statusBar.contributed;
+        assert.ok(items.length > 0, 'no items to check');
+        for (const item of items) {
             const label = item.accessibilityInformation!.label;
             assert.ok(
                 !/\$\(/.test(label),
@@ -44,7 +48,9 @@ suite('status bar accessibility', () => {
     });
 
     test('every label stands on its own, since it suppresses the tooltip', async () => {
-        for (const item of (await api()).statusBar.contributed) {
+        const items = (await api()).statusBar.contributed;
+        assert.ok(items.length > 0, 'no items to check');
+        for (const item of items) {
             const label = item.accessibilityInformation!.label;
             // A bare number or icon name says nothing about what activating it
             // does. Requiring more than one word is a cheap proxy for that.
@@ -58,6 +64,7 @@ suite('status bar accessibility', () => {
 
     test('names are distinct, so a hidden item can be found again', async () => {
         const names = (await api()).statusBar.contributed.map(i => i.name);
+        assert.ok(names.length > 0, 'no items to check');
         assert.strictEqual(new Set(names).size, names.length, `duplicate names: ${names.join(', ')}`);
     });
 });

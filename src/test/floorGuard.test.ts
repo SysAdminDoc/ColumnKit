@@ -16,14 +16,23 @@ async function readSizes(): Promise<number[]> {
  * strict-equality value doRestoreGroup expands on.
  */
 async function parkOnFloor(): Promise<number[]> {
-    // These exact weights are the shape measured on 2026-09-03 to produce
-    // [412, 220, 220]: two groups clamped onto the floor. Small or lopsided
-    // weights are NOT reliable here. A share of 0.1 or 0.01 leaves the group at
-    // a sub-pixel size that never gets clamped up to the minimum, so the layout
-    // reads back as 0.1px and no group is on the floor at all.
+    // Asks for the floor exactly, rather than asking for less and relying on
+    // VS Code to clamp upward.
+    //
+    // Clamping is not dependable. The old {0.5, 0.3, 0.2} shape worked only
+    // because the test host happened to be about 852px wide, and a pixel
+    // request of [540, 170, 170] against an 880px area was honoured verbatim,
+    // leaving nothing on the floor at all. Requesting FLOOR needs no clamp and
+    // holds at any window width.
+    const width = (await settle()).reduce((a, b) => a + b, 0);
+    const wide = width - FLOOR * 2;
+    assert.ok(
+        wide >= FLOOR,
+        `editor area ${width} is too narrow to hold three groups above the floor`
+    );
     await vscode.commands.executeCommand('vscode.setEditorLayout', {
         orientation: 0,
-        groups: [{ size: 0.5 }, { size: 0.3 }, { size: 0.2 }]
+        groups: [{ size: wide }, { size: FLOOR }, { size: FLOOR }]
     });
     return settle();
 }
@@ -63,11 +72,17 @@ suite('FloorGuard', () => {
         (await api()).floorGuard.resume();
     });
 
-    test('a below-minimum request really does land on the floor', async () => {
+    test('a layout really can hold groups sitting exactly on the floor', async () => {
+        // The state the whole extension exists to defuse: a group whose width
+        // equals its minimum, which doRestoreGroup expands on every click.
+        //
+        // This used to request a below-minimum share and assert VS Code clamped
+        // it up. That clamp turned out to be unreliable, so the setup now asks
+        // for the floor outright and this asserts the state was reached.
         const sizes = await parkOnFloor();
         assert.ok(
-            flooredIndexes(sizes).length >= 1,
-            `expected at least one group clamped to exactly ${FLOOR}, got ${JSON.stringify(sizes)}`
+            flooredIndexes(sizes).length >= 2,
+            `expected two groups at exactly ${FLOOR}, got ${JSON.stringify(sizes)}`
         );
     });
 

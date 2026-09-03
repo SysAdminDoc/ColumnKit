@@ -28,6 +28,24 @@ async function settle(): Promise<number[]> {
     throw new Error('editor layout never settled; last read: ' + JSON.stringify(await readSizes()));
 }
 
+const FLOOR = 220;
+
+/**
+ * Parks two groups exactly on the floor, at whatever width the test host
+ * happens to be. See the twin in floorGuard.test.ts for why this asks for the
+ * floor outright instead of relying on VS Code to clamp a smaller request up.
+ */
+async function parkOnFloor(): Promise<number[]> {
+    const width = (await settle()).reduce((a, b) => a + b, 0);
+    const wide = width - FLOOR * 2;
+    assert.ok(wide >= FLOOR, `editor area ${width} is too narrow for this setup`);
+    await vscode.commands.executeCommand('vscode.setEditorLayout', {
+        orientation: 0,
+        groups: [{ size: wide }, { size: FLOOR }, { size: FLOOR }]
+    });
+    return settle();
+}
+
 async function api(): Promise<ColumnKitApi> {
     const ext = vscode.extensions.getExtension<ColumnKitApi>('SysAdminDoc.columnkit');
     assert.ok(ext, 'ColumnKit extension should be present in the test host');
@@ -92,23 +110,18 @@ suite('layout undo', () => {
 
         // No throw, and no layout change: the ring is empty because drainHistory
         // ran after the write that would have filled it.
-        await drainHistory();
+        const columnKit = await drainHistory();
+        assert.strictEqual(columnKit.history.size, 0, 'setup must leave the ring empty');
         await vscode.commands.executeCommand('columnkit.undoLayout');
 
-        assert.deepStrictEqual(await readSizes(), before, 'an empty ring must not move the layout');
+        assert.deepStrictEqual(await settle(), before, 'an empty ring must not move the layout');
     });
 
     test('excludes automatic floor corrections from the ring', async () => {
         // Corrections fire on ordinary editor activity. Recording them would bury
         // the user's last deliberate change under a pile of automatic ones.
         const columnKit = await drainHistory();
-
-        // The shape measured to clamp two groups onto the 220 floor.
-        await vscode.commands.executeCommand('vscode.setEditorLayout', {
-            orientation: 0,
-            groups: [{ size: 0.5 }, { size: 0.3 }, { size: 0.2 }]
-        });
-        await settle();
+        await parkOnFloor();
 
         assert.strictEqual(await columnKit.floorGuard.run(), true, 'guard should have corrected');
         assert.strictEqual(columnKit.history.size, 0, 'a correction must not enter the ring');
@@ -120,17 +133,12 @@ suite('layout undo', () => {
         //
         // The restored layout MUST contain a floored group or this test is
         // vacuous: the guard returns false on a clean layout whether it is
-        // suspended or not. The {0.5, 0.3, 0.2} shape is the one measured to
-        // clamp two groups onto the floor.
+        // suspended or not.
         const columnKit = await drainHistory();
 
-        await vscode.commands.executeCommand('vscode.setEditorLayout', {
-            orientation: 0,
-            groups: [{ size: 0.5 }, { size: 0.3 }, { size: 0.2 }]
-        });
-        const floored = await settle();
+        const floored = await parkOnFloor();
         assert.ok(
-            floored.some(size => size === 220),
+            floored.filter(size => size === FLOOR).length >= 2,
             `setup needs a group on the floor, got ${JSON.stringify(floored)}`
         );
 

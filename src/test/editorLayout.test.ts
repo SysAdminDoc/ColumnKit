@@ -61,18 +61,22 @@ suite('vscode.getEditorLayout', () => {
             await new Promise(resolve => setTimeout(resolve, 20));
         }
 
-        const width = measureEditorWidth(live!);
+        const floor = 220;
+        const width = measureEditorWidth(live!, floor);
         assert.ok(width !== undefined, 'a settled flat layout must yield a width');
-        assert.strictEqual(
-            width,
-            live!.groups.reduce((a, g) => a + (g.size ?? 0), 0),
-            'the measurement is the sum of the top-level sizes'
-        );
         console.log(`COLUMNKIT_PROBE editorWidth=${width}`);
+
+        // Independent of the implementation: the editor area has to be wide
+        // enough to hold the groups it is currently displaying, and no wider
+        // than the whole screen could plausibly be.
+        assert.ok(
+            width >= live!.groups.length * floor,
+            `measured ${width} for ${live!.groups.length} groups, narrower than their own minimums`
+        );
+        assert.ok(width < 20000, `measured ${width}, which is not a plausible editor area`);
 
         // The verdict must follow the measurement rather than a constant: at
         // this width there is some column count that fits and some that does not.
-        const floor = 220;
         // The most columns that stay STRICTLY above the floor. An exact multiple
         // lands every column on it, and equality is what arms the expand, so
         // Math.floor would name a count that is itself risky.

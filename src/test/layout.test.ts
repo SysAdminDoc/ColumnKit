@@ -41,6 +41,15 @@ suite('LayoutHistory', () => {
         assert.strictEqual(history.size, 0);
     });
 
+    test('clears, so a second activation does not inherit an old stack', () => {
+        const history = new LayoutHistory();
+        history.record(layout(1));
+        history.record(layout(2));
+        history.clear();
+        assert.strictEqual(history.size, 0);
+        assert.strictEqual(history.pop(), undefined);
+    });
+
     test('tracks its size as entries go in and out', () => {
         const history = new LayoutHistory();
         assert.strictEqual(history.size, 0);
@@ -155,7 +164,7 @@ suite('correctFloor', () => {
 suite('measureEditorWidth', () => {
     test('sums the top-level sizes of a column layout', () => {
         assert.strictEqual(
-            measureEditorWidth({ orientation: 0, groups: [{ size: 412 }, { size: 220 }, { size: 220 }] }),
+            measureEditorWidth({ orientation: 0, groups: [{ size: 412 }, { size: 220 }, { size: 220 }] }, 220),
             852
         );
     });
@@ -166,13 +175,13 @@ suite('measureEditorWidth', () => {
         const width = measureEditorWidth({
             orientation: 1,
             groups: [{ size: 300, groups: [{ size: 500 }, { size: 352 }] }, { size: 200 }]
-        });
+        }, 220);
         assert.strictEqual(width, 852);
     });
 
     test('refuses stacked rows that expose no width at all', () => {
         assert.strictEqual(
-            measureEditorWidth({ orientation: 1, groups: [{ size: 300 }, { size: 200 }] }),
+            measureEditorWidth({ orientation: 1, groups: [{ size: 300 }, { size: 200 }] }, 220),
             undefined
         );
     });
@@ -181,7 +190,30 @@ suite('measureEditorWidth', () => {
         // A read straight after a write returns the weights it was written with
         // until the grid lays out.
         assert.strictEqual(
-            measureEditorWidth({ orientation: 0, groups: [{ size: 0.5 }, { size: 0.5 }] }),
+            measureEditorWidth({ orientation: 0, groups: [{ size: 0.5 }, { size: 0.5 }] }, 220),
+            undefined
+        );
+    });
+
+    test('refuses the single-column weight, which is exactly 1', () => {
+        // setColumns(1) writes { size: 1/1 }. Under a `>= 1` rule that read back
+        // as a one-pixel editor area, and every subsequent count looked risky.
+        assert.strictEqual(
+            measureEditorWidth({ orientation: 0, groups: [{ size: 1 }] }, 220),
+            undefined
+        );
+    });
+
+    test('accepts a real single-column layout', () => {
+        assert.strictEqual(
+            measureEditorWidth({ orientation: 0, groups: [{ size: 2752 }] }, 220),
+            2752
+        );
+    });
+
+    test('refuses a column narrower than the floor, which cannot be a real width', () => {
+        assert.strictEqual(
+            measureEditorWidth({ orientation: 0, groups: [{ size: 219 }, { size: 600 }] }, 220),
             undefined
         );
     });
@@ -213,6 +245,18 @@ suite('floorRisk', () => {
     test('warns for 6 columns in a narrow window, where the old guess stayed quiet', () => {
         // 1280 / 6 = 213. Under the 1920 assumption this was silent.
         assert.strictEqual(floorRisk(1280, 6, floor), true);
+    });
+
+    test('warns when an integer split puts most columns on the floor', () => {
+        // 2641 / 12 averages 220.08, fractionally clear of the floor, but the
+        // real split is eleven columns at 220 and one at 221. Judging the mean
+        // let this through.
+        assert.strictEqual(floorRisk(2641, 12, floor), true);
+    });
+
+    test('still passes a split whose narrowest column clears the floor', () => {
+        // 2652 / 12 = 221 exactly, so every column is clear.
+        assert.strictEqual(floorRisk(2652, 12, floor), false);
     });
 
     test('reports no risk when the width is unknown', () => {

@@ -137,6 +137,11 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": true
-    }
-  }
+    },
+    "virtualWorkspaces": true
+  },
+  "icon": "resources/icon.png",
+  "extensionKind": [
+    "ui"
+  ]
 }

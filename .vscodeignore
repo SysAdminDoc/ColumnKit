@@ -16,3 +16,4 @@ dist/**
 src/test/**
 out/test/**
 .vscode-test.mjs
+scripts/**

@@ -1,4 +1,6 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 
 /**
@@ -29,6 +31,28 @@ suite('manifest', () => {
             true,
             'ColumnKit must declare untrusted workspace support or it is disabled in Restricted Mode'
         );
+    });
+
+    test('declares itself a UI extension, an icon, and virtual workspace support', () => {
+        // CK-13. Without extensionKind a Remote SSH, WSL or Codespaces window
+        // installs and runs this UI-only extension on the remote host.
+        assert.deepStrictEqual(manifest().extensionKind, ['ui']);
+        assert.strictEqual(manifest().capabilities?.virtualWorkspaces, true);
+        // vsce rejects SVG outright, and anything under 128px square.
+        assert.strictEqual(manifest().icon, 'resources/icon.png');
+    });
+
+    test('the icon really is a PNG of at least 128 square', () => {
+        const icon = path.join(extension().extensionPath, manifest().icon);
+        const bytes = fs.readFileSync(icon);
+        assert.deepStrictEqual(
+            [...bytes.subarray(0, 8)],
+            [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+            'not a PNG'
+        );
+        assert.strictEqual(bytes.subarray(12, 16).toString('ascii'), 'IHDR');
+        assert.ok(bytes.readUInt32BE(16) >= 128, `icon is ${bytes.readUInt32BE(16)}px wide`);
+        assert.ok(bytes.readUInt32BE(20) >= 128, `icon is ${bytes.readUInt32BE(20)}px tall`);
     });
 
     test('every contributed command is registered at runtime', async () => {

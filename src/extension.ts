@@ -1,5 +1,13 @@
 import * as vscode from 'vscode';
-import { EditorLayout, LayoutHistory, correctFloor, describeColumnChange, isFlat } from './layout';
+import {
+    EditorLayout,
+    LayoutHistory,
+    correctFloor,
+    describeColumnChange,
+    floorRisk,
+    isFlat,
+    measureEditorWidth
+} from './layout';
 
 const CONFIG_SECTION = 'columnkit';
 
@@ -42,13 +50,12 @@ async function readLayout(): Promise<EditorLayout | undefined> {
  * the editor area into too many columns parks them all on that floor, so warn
  * rather than silently handing the user the behaviour they are trying to avoid.
  */
-function estimateFloorRisk(columns: number): boolean {
-    const minWidth = config().get<number>('minGroupWidth', 220);
-    // No API exposes the editor area width, so approximate from the window.
-    // devicePixelRatio is not available in the extension host either, which is
-    // why this stays a soft warning instead of a hard block.
-    const assumedEditorWidth = 1920;
-    return columns * minWidth > assumedEditorWidth;
+function assessFloorRisk(previous: EditorLayout | undefined, columns: number): boolean {
+    return floorRisk(
+        previous && measureEditorWidth(previous),
+        columns,
+        config().get<number>('minGroupWidth', 220)
+    );
 }
 
 /** User-initiated layout changes only. Floor corrections never land here. */
@@ -57,11 +64,12 @@ const history = new LayoutHistory();
 /** Set by activate(). Undo needs it to hold corrections off during a restore. */
 let floorGuard: FloorGuard | undefined;
 
-async function remember(): Promise<void> {
+async function remember(): Promise<EditorLayout | undefined> {
     const layout = await readLayout();
     if (layout) {
         history.record(layout);
     }
+    return layout;
 }
 
 async function evenColumns(): Promise<void> {
@@ -85,7 +93,8 @@ async function undoLayout(): Promise<void> {
 
 async function setColumns(columns: number): Promise<void> {
     const before = currentColumnCount();
-    await remember();
+    // One read serves both the undo ring and the width measurement.
+    const previous = await remember();
     const size = 1 / columns;
     const layout: EditorGroupLayout = {
         orientation: 0,
@@ -95,7 +104,7 @@ async function setColumns(columns: number): Promise<void> {
     await vscode.commands.executeCommand('vscode.setEditorLayout', layout);
 
     vscode.window.setStatusBarMessage(
-        describeColumnChange({ columns, before, floorRisk: estimateFloorRisk(columns) }),
+        describeColumnChange({ columns, before, floorRisk: assessFloorRisk(previous, columns) }),
         6000
     );
 }

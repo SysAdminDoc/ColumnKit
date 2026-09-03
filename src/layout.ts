@@ -33,6 +33,55 @@ export function leaves(nodes: LayoutNode[], out: LayoutNode[] = []): LayoutNode[
 /** How far above the floor a corrected column is placed. */
 export const CORRECTION_MARGIN = 24;
 
+/**
+ * Editor area width in CSS pixels, or undefined when the layout cannot say.
+ *
+ * Top-level sizes are measured along the layout's own axis: with orientation 0
+ * they are widths and sum to the editor area width, with orientation 1 they are
+ * heights and say nothing about width. A stacked layout that holds a horizontal
+ * split does expose widths, through that branch's children.
+ *
+ * Sub-pixel totals mean the grid has not laid out yet and the sizes are still
+ * the raw weights they were written with, which are not a measurement.
+ */
+export function measureEditorWidth(layout: EditorLayout): number | undefined {
+    const across =
+        layout.orientation === 0
+            ? layout.groups
+            : layout.groups.find(n => n.groups && n.groups.length > 0)?.groups ?? [];
+
+    if (across.length === 0) {
+        return undefined;
+    }
+
+    // Every size must be a plausible pixel width. Testing the sum instead lets
+    // a set of weights through whenever they happen to add up past the
+    // threshold, and ours always sum to exactly 1.
+    const sizes = across.map(n => n.size ?? 0);
+    if (sizes.some(size => size < 1)) {
+        return undefined;
+    }
+    return sizes.reduce((total, size) => total + size, 0);
+}
+
+/**
+ * Whether splitting `editorWidth` into `columns` leaves them on or under the
+ * floor, which is the width that arms VS Code's expand-on-click.
+ *
+ * An unknown width reports no risk. Warning on a number we do not have is how
+ * the old 1920px assumption both over- and under-warned.
+ */
+export function floorRisk(
+    editorWidth: number | undefined,
+    columns: number,
+    floor: number
+): boolean {
+    if (editorWidth === undefined || columns < 1) {
+        return false;
+    }
+    return editorWidth / columns <= floor;
+}
+
 export interface ColumnChange {
     /** Column count that was requested. */
     columns: number;

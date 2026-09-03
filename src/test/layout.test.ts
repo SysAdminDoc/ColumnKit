@@ -1,5 +1,14 @@
 import * as assert from 'assert';
-import { CORRECTION_MARGIN, LayoutHistory, correctFloor, describeColumnChange, isFlat, leaves } from '../layout';
+import {
+    CORRECTION_MARGIN,
+    LayoutHistory,
+    correctFloor,
+    describeColumnChange,
+    floorRisk,
+    isFlat,
+    leaves,
+    measureEditorWidth
+} from '../layout';
 
 suite('LayoutHistory', () => {
     const layout = (n: number) => ({ orientation: 0 as const, groups: [{ size: n }] });
@@ -140,6 +149,78 @@ suite('correctFloor', () => {
     test('refuses degenerate input rather than throwing', () => {
         assert.strictEqual(correctFloor([220], floor), undefined);
         assert.strictEqual(correctFloor([], floor), undefined);
+    });
+});
+
+suite('measureEditorWidth', () => {
+    test('sums the top-level sizes of a column layout', () => {
+        assert.strictEqual(
+            measureEditorWidth({ orientation: 0, groups: [{ size: 412 }, { size: 220 }, { size: 220 }] }),
+            852
+        );
+    });
+
+    test('reads widths from a branch when the top level is stacked rows', () => {
+        // With orientation 1 the top-level sizes are heights. The horizontal
+        // split inside one of those rows is what carries widths.
+        const width = measureEditorWidth({
+            orientation: 1,
+            groups: [{ size: 300, groups: [{ size: 500 }, { size: 352 }] }, { size: 200 }]
+        });
+        assert.strictEqual(width, 852);
+    });
+
+    test('refuses stacked rows that expose no width at all', () => {
+        assert.strictEqual(
+            measureEditorWidth({ orientation: 1, groups: [{ size: 300 }, { size: 200 }] }),
+            undefined
+        );
+    });
+
+    test('refuses raw weights, which are not a measurement', () => {
+        // A read straight after a write returns the weights it was written with
+        // until the grid lays out.
+        assert.strictEqual(
+            measureEditorWidth({ orientation: 0, groups: [{ size: 0.5 }, { size: 0.5 }] }),
+            undefined
+        );
+    });
+});
+
+suite('floorRisk', () => {
+    const floor = 220;
+
+    test('warns when the columns would land on the floor', () => {
+        // 852 / 4 = 213, under the floor.
+        assert.strictEqual(floorRisk(852, 4, floor), true);
+    });
+
+    test('warns when they land exactly on it, which is what arms the expand', () => {
+        assert.strictEqual(floorRisk(880, 4, floor), true);
+    });
+
+    test('stays quiet when the columns fit', () => {
+        // 852 / 3 = 284.
+        assert.strictEqual(floorRisk(852, 3, floor), false);
+    });
+
+    test('stays quiet for 8 columns on the wide display', () => {
+        // 3440x1440 at 125% is 2752 CSS px, so 8 columns is 344 each. The old
+        // 1920px assumption warned here, wrongly.
+        assert.strictEqual(floorRisk(2752, 8, floor), false);
+    });
+
+    test('warns for 6 columns in a narrow window, where the old guess stayed quiet', () => {
+        // 1280 / 6 = 213. Under the 1920 assumption this was silent.
+        assert.strictEqual(floorRisk(1280, 6, floor), true);
+    });
+
+    test('reports no risk when the width is unknown', () => {
+        assert.strictEqual(floorRisk(undefined, 12, floor), false);
+    });
+
+    test('refuses a nonsense column count rather than dividing by zero', () => {
+        assert.strictEqual(floorRisk(852, 0, floor), false);
     });
 });
 

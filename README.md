@@ -68,7 +68,7 @@ code --install-extension dist/columnkit-0.1.0.vsix
 
 ## Known limits
 
-The extension host has no API for the editor area's width, so the warning about columns landing on the 220 floor is an estimate against an assumed 1920px area, not a measurement. It errs toward warning you.
+The floor a column has to clear isn't always 220. VS Code compares a group against whatever its own editor pane asks for, and a Settings tab wants 500, a side-by-side diff about 440. Those panes can still expand on click. Everything else, including chat panels and terminals, sits at 220 and is handled.
 
 ## License
 

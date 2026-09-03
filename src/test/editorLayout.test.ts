@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
+import { EditorLayout, floorRisk, measureEditorWidth } from '../layout';
 
 /**
  * CK-1. `vscode.getEditorLayout` is untyped and its own doc comment says sizes
@@ -42,6 +43,43 @@ suite('vscode.getEditorLayout', () => {
             total > 2,
             `expected pixel-scale sizes but the sizes sum to ${total}, which indicates normalized ratios`
         );
+    });
+
+    test('measures a live editor area, and the risk verdict flips at the real width', async () => {
+        // CK-6. The warning used to be computed against a hardcoded 1920px.
+        await vscode.commands.executeCommand('vscode.setEditorLayout', {
+            orientation: 0,
+            groups: [{ size: 0.5 }, { size: 0.3 }, { size: 0.2 }]
+        });
+
+        let live: EditorLayout | undefined;
+        for (let attempt = 0; attempt < 50; attempt++) {
+            live = await vscode.commands.executeCommand<EditorLayout>('vscode.getEditorLayout');
+            if (live.groups.every(g => (g.size ?? 0) >= 1)) {
+                break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+
+        const width = measureEditorWidth(live!);
+        assert.ok(width !== undefined, 'a settled flat layout must yield a width');
+        assert.strictEqual(
+            width,
+            live!.groups.reduce((a, g) => a + (g.size ?? 0), 0),
+            'the measurement is the sum of the top-level sizes'
+        );
+        console.log(`COLUMNKIT_PROBE editorWidth=${width}`);
+
+        // The verdict must follow the measurement rather than a constant: at
+        // this width there is some column count that fits and some that does not.
+        const floor = 220;
+        // The most columns that stay STRICTLY above the floor. An exact multiple
+        // lands every column on it, and equality is what arms the expand, so
+        // Math.floor would name a count that is itself risky.
+        const fits = Math.ceil(width / floor) - 1;
+        assert.ok(fits >= 1, `editor area ${width} cannot hold even one column`);
+        assert.strictEqual(floorRisk(width, fits, floor), false, `${fits} columns should fit`);
+        assert.strictEqual(floorRisk(width, fits + 1, floor), true, `${fits + 1} columns should not`);
     });
 
     test('write accepts relative weights, so a read result can be fed straight back', async () => {

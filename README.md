@@ -60,10 +60,10 @@ npm run compile
 npm run package
 ```
 
-That drops a `.vsix` in `dist/`. Install it with:
+That drops a `.vsix` in `dist/`, named for the version in `package.json`. Install it with:
 
 ```
-code --install-extension dist/columnkit-0.1.0.vsix
+code --install-extension dist/columnkit-*.vsix
 ```
 
 ## Known limits

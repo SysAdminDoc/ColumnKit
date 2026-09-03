@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- `npm run package` names the .vsix from the version in `package.json` instead of a hardcoded 0.1.0, so a version bump no longer produces a misnamed file.
 - Screen readers announced the buttons as "split-horizontal Even" and, for the presets, just a number. Every button now has a spoken label that says what it does, and a name so you can find it again in the status bar menu after hiding it.
 - The warning about columns landing on the minimum width is now measured from the real editor area instead of an assumed 1920px screen. It used to warn about layouts that fit fine on a wide monitor, and stay quiet about ones that didn't fit in a small window.
 - `RESEARCH.md` and `ROADMAP.md` were being packaged into the published `.vsix`. They are now excluded.

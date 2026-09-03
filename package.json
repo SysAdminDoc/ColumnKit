@@ -127,7 +127,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package --out dist/columnkit-0.1.0.vsix",
+    "package": "vsce package --out dist/",
     "test": "vscode-test"
   },
   "devDependencies": {

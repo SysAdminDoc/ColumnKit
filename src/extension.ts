@@ -153,6 +153,36 @@ class StatusBar {
 
     constructor(private readonly context: vscode.ExtensionContext) { }
 
+    /** Read by the tests; there is no API to enumerate status bar items. */
+    get contributed(): readonly vscode.StatusBarItem[] {
+        return this.items;
+    }
+
+    /**
+     * Creates an item with its label and name set alongside its text, so the
+     * three cannot drift apart.
+     *
+     * `text` is announced literally by screen readers, codicon markup and all,
+     * so `$(layout)` reads as "layout" and a preset reads as the bare number
+     * "4". An accessibilityInformation.label replaces the text AND suppresses
+     * the tooltip append, so it has to stand on its own. `name` is the only
+     * thing that lets someone who hid an item find it again in the status bar's
+     * context menu.
+     */
+    private add(
+        alignment: vscode.StatusBarAlignment,
+        priority: number,
+        spec: { text: string; name: string; label: string; tooltip: string; command: string }
+    ): void {
+        const item = vscode.window.createStatusBarItem(alignment, priority);
+        item.text = spec.text;
+        item.name = spec.name;
+        item.accessibilityInformation = { label: spec.label, role: 'button' };
+        item.tooltip = spec.tooltip;
+        item.command = spec.command;
+        this.items.push(item);
+    }
+
     rebuild(): void {
         this.dispose();
 
@@ -165,28 +195,34 @@ class StatusBar {
         // Higher priority keeps the group together and to the outside edge.
         let priority = 1000;
 
-        const even = vscode.window.createStatusBarItem(alignment, priority--);
-        even.text = '$(split-horizontal) Even';
-        even.tooltip = 'ColumnKit: even out every open column, keeping the count as-is';
-        even.command = 'columnkit.even';
-        this.items.push(even);
+        this.add(alignment, priority--, {
+            text: '$(split-horizontal) Even',
+            name: 'ColumnKit: Even Out Columns',
+            label: 'Even out editor columns',
+            tooltip: 'ColumnKit: even out every open column, keeping the count as-is',
+            command: 'columnkit.even'
+        });
 
         for (const n of cfg.get<number[]>('statusBarPresets', [4, 6, 8])) {
             if (!Number.isInteger(n) || n < 1 || n > 12) {
                 continue;
             }
-            const item = vscode.window.createStatusBarItem(alignment, priority--);
-            item.text = `${n}`;
-            item.tooltip = `ColumnKit: ${n} equal columns`;
-            item.command = `columnkit.columns${n}`;
-            this.items.push(item);
+            this.add(alignment, priority--, {
+                text: `${n}`,
+                name: `ColumnKit: ${n} Columns`,
+                label: `${n} equal editor ${n === 1 ? 'column' : 'columns'}`,
+                tooltip: `ColumnKit: ${n} equal columns`,
+                command: `columnkit.columns${n}`
+            });
         }
 
-        const picker = vscode.window.createStatusBarItem(alignment, priority--);
-        picker.text = '$(layout)';
-        picker.tooltip = 'ColumnKit: pick a column count';
-        picker.command = 'columnkit.pickColumns';
-        this.items.push(picker);
+        this.add(alignment, priority--, {
+            text: '$(layout)',
+            name: 'ColumnKit: Column Count Picker',
+            label: 'Choose editor column count',
+            tooltip: 'ColumnKit: pick a column count',
+            command: 'columnkit.pickColumns'
+        });
 
         for (const item of this.items) {
             item.show();
@@ -345,6 +381,7 @@ class FloorGuard {
 export interface ColumnKitApi {
     floorGuard: FloorGuard;
     history: LayoutHistory;
+    statusBar: { readonly contributed: readonly vscode.StatusBarItem[] };
 }
 
 export function activate(context: vscode.ExtensionContext): ColumnKitApi {
@@ -387,7 +424,7 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
 
     // There is no API to enumerate status bar items or observe the guard from
     // outside, so the tests reach them through the activation result.
-    return { floorGuard: guard, history };
+    return { floorGuard: guard, history, statusBar };
 }
 
 export function deactivate(): void {

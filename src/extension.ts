@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import {
     DEFAULT_FLOOR,
+    DEFAULT_HEIGHT_FLOOR,
     EditorLayout,
     LayoutHistory,
     ColumnFloor,
@@ -19,6 +20,8 @@ import {
     maxColumns,
     measureEditorWidth,
     RemainderStrategy,
+    splitHolding,
+    withPinnedWidths,
     withColumnShare
 } from './layout';
 import { ASSET_PREFIX, Release, UpdateDecision, decide, isRelease, shouldCheck } from './update';
@@ -150,10 +153,13 @@ function floorsForNodes(nodes: LayoutNode[]): ColumnFloor[] {
     return nodes.map((node, i) => {
         const combined = ordinary();
         for (let under = 0; under < spans[i]; under++) {
-            // Only a top-level leaf's own size is a width; anything inside a
-            // branch is a height and says nothing about the arming width.
-            const own = spans[i] === 1 ? node.size : undefined;
-            const floor = floorForTab(byColumn.get(leaf + 1)?.activeTab, own);
+            // Under orientation 0 a top-level node's size is a width whether it
+            // holds one group or a stack, and every group in that stack shares
+            // it. So the same width answers for all of them: a Settings pane in
+            // a column sitting at exactly 500 is armed wherever in the stack it
+            // is. Passing undefined here made the guard blind to that on every
+            // 2D grid.
+            const floor = floorForTab(byColumn.get(leaf + 1)?.activeTab, node.size);
             combined.floor = Math.max(combined.floor, floor.floor);
             combined.donorFloor = Math.max(combined.donorFloor, floor.donorFloor);
             leaf++;
@@ -181,6 +187,122 @@ const history = new LayoutHistory();
 
 /** Per workspace, never global: a geometry only means something in context. */
 const REMEMBERED_KEY = 'layout.remembered';
+
+/**
+ * Pinned widths, keyed by grid position.
+ *
+ * There is no stable identity for an editor group in the extension API, so a
+ * pin belongs to a position rather than to whatever is showing there. That
+ * matches Vim, where `winfixwidth` is a window property and is not copied to a
+ * split. Kept in workspaceState so pins survive a reload.
+ */
+const PINS_KEY = 'layout.pins';
+
+function readPins(context: vscode.ExtensionContext): Record<string, number> {
+    return context.workspaceState.get<Record<string, number>>(PINS_KEY) ?? {};
+}
+
+/** Pins as a per-column list, aligned to the layout. */
+function pinsForColumns(context: vscode.ExtensionContext, columns: number): (number | undefined)[] {
+    const pins = readPins(context);
+    return Array.from({ length: columns }, (_, i) => pins[String(i + 1)]);
+}
+
+/** Toggles the pin on the active column, at whatever width it has now. */
+async function togglePin(context: vscode.ExtensionContext): Promise<void> {
+    const layout = await readLayout();
+    const sizes = layout ? layout.groups.map(node => node.size ?? 0) : [];
+    if (!layout || layout.orientation !== 0 || !isFlat(layout.groups) || sizes.length < 2) {
+        notify(vscode.l10n.t('ColumnKit: pinning needs a flat row of two or more columns.'), 4000);
+        return;
+    }
+    const index = activeColumnIndex(sizes.length);
+    if (index === undefined) {
+        notify(vscode.l10n.t('ColumnKit: could not tell which column is active.'), 4000);
+        return;
+    }
+
+    const pins = readPins(context);
+    const key = String(index + 1);
+    if (pins[key] !== undefined) {
+        delete pins[key];
+        await context.workspaceState.update(PINS_KEY, pins);
+        notify(vscode.l10n.t('ColumnKit: column {0} is no longer pinned.', index + 1), 3000);
+        return;
+    }
+
+    // Every column pinned leaves nothing to absorb a change, so the last free
+    // column stays free.
+    const free = sizes.filter((_, i) => pins[String(i + 1)] === undefined).length;
+    if (free <= 1) {
+        notify(
+            vscode.l10n.t('ColumnKit: at least one column has to stay unpinned to take up the slack.'),
+            5000
+        );
+        return;
+    }
+
+    pins[key] = sizes[index];
+    await context.workspaceState.update(PINS_KEY, pins);
+    notify(
+        vscode.l10n.t('ColumnKit: column {0} is pinned at {1}px.', index + 1, sizes[index]),
+        3000
+    );
+}
+
+/**
+ * Puts the pinned columns back at their width, evening the rest.
+ *
+ * Runs when the group set changes, which is when a new editor group would
+ * otherwise take space from a pinned column.
+ */
+function pinnedLayoutFor(
+    context: vscode.ExtensionContext,
+    layout: EditorLayout
+): number[] | undefined {
+    if (Object.keys(readPins(context)).length === 0) {
+        return undefined;
+    }
+    if (layout.orientation !== 0 || !isFlat(layout.groups)) {
+        return undefined;
+    }
+    const sizes = layout.groups.map(node => node.size ?? 0);
+    // Raw weights from a write that has not laid out yet are not a measurement.
+    if (sizes.length < 2 || sizes.some(size => size < DEFAULT_FLOOR)) {
+        return undefined;
+    }
+    return withPinnedWidths(
+        sizes,
+        pinsForColumns(context, sizes.length),
+        floorsForColumns(sizes).map(floor => floor.floor)
+    );
+}
+
+async function enforcePins(context: vscode.ExtensionContext): Promise<boolean> {
+    const layout = await readLayout();
+    if (!layout) {
+        return false;
+    }
+    const sizes = layout.groups.map(node => node.size ?? 0);
+    const next = pinnedLayoutFor(context, layout);
+    if (!next || next.every((size, i) => size === sizes[i])) {
+        return false;
+    }
+
+    floorGuard?.beginHold();
+    try {
+        await vscode.commands.executeCommand('vscode.setEditorLayout', {
+            orientation: 0,
+            groups: next.map(size => ({ size }))
+        });
+        log?.trace(`pins applied: ${JSON.stringify(sizes)} -> ${JSON.stringify(next)}`);
+        return true;
+    } catch {
+        return false;
+    } finally {
+        floorGuard?.endHold(UNDO_SETTLE_MS);
+    }
+}
 
 /** Coalesces the burst of changes a single user action produces. */
 const REMEMBER_DEBOUNCE_MS = 1500;
@@ -670,11 +792,21 @@ function forgetIfRecorded(recorded: EditorLayout | undefined): void {
     }
 }
 
-async function evenColumns(): Promise<void> {
+async function evenColumns(context: vscode.ExtensionContext): Promise<void> {
     const previous = await readLayout();
+    // A pinned column keeps its width while the rest are evened, which the
+    // built-in command cannot do: it distributes every group in the grid.
+    const pinned = previous ? pinnedLayoutFor(context, previous) : undefined;
     floorGuard?.beginHold();
     try {
-        await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
+        if (pinned) {
+            await vscode.commands.executeCommand('vscode.setEditorLayout', {
+                orientation: 0,
+                groups: pinned.map(size => ({ size }))
+            });
+        } else {
+            await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
+        }
     } catch {
         notify(vscode.l10n.t('ColumnKit: could not even out the columns.'), 3000);
         return;
@@ -816,6 +948,12 @@ async function keepingEmptyGroups<T>(restore: () => Promise<T>): Promise<T> {
  * On a flat row that is the same thing as Even. On a grid it is not: evening
  * one column's rows should leave the column beside it exactly as it was.
  */
+/** Whether every row of the split holding `leafIndex` clears the height floor. */
+function clearsHeightFloor(layout: EditorLayout, leafIndex: number): boolean {
+    const rows = splitHolding(layout.groups, leafIndex);
+    return rows !== undefined && rows.every(node => (node.size ?? 0) > DEFAULT_HEIGHT_FLOOR);
+}
+
 async function evenSplitHere(): Promise<void> {
     const layout = await readLayout();
     if (!layout) {
@@ -829,13 +967,22 @@ async function evenSplitHere(): Promise<void> {
         return;
     }
 
+    // A layout that has not been laid out yet still reports the raw weights it
+    // was written with, and evening arithmetic on those is arithmetic on
+    // nothing.
+    if (leaves(layout.groups).some(node => (node.size ?? 0) < 1)) {
+        notify(vscode.l10n.t('ColumnKit: the columns have not settled yet, try again.'), 3000);
+        return;
+    }
+
     const next = evenSplit(layout, leafIndex);
     if (!next) {
         notify(vscode.l10n.t('ColumnKit: this group has nothing to even out against.'), 4000);
         return;
     }
-    // Only a top-level split is widths, and only widths have the 220 floor.
-    if (layout.orientation === 0 && isTopLevelLeaf(layout.groups, leafIndex)) {
+
+    const atTopLevel = layout.orientation === 0 && isTopLevelLeaf(layout.groups, leafIndex);
+    if (atTopLevel) {
         const floors = floorsForNodes(next.groups);
         if (next.groups.some((node, i) => (node.size ?? 0) <= floors[i].floor)) {
             notify(
@@ -846,6 +993,17 @@ async function evenSplitHere(): Promise<void> {
             );
             return;
         }
+    } else if (!clearsHeightFloor(next, leafIndex)) {
+        // Rows answer to minimumHeight, and doRestoreGroup expands on that just
+        // as readily. Evening twelve rows into a short column would arm every
+        // one of them, which is the defect this command must not create.
+        notify(
+            vscode.l10n.t(
+                'ColumnKit: evening these would put a row at the minimum height, where a click expands it.'
+            ),
+            5000
+        );
+        return;
     }
 
     history.record({ layout });
@@ -1570,6 +1728,8 @@ export interface ColumnKitApi {
     checkForUpdate(now?: number, fetch?: FetchRelease): Promise<void>;
     /** Runs the download-and-verify step. Exposed so the checksum gate is testable. */
     installUpdate(update: UpdateDecision, download?: DownloadBytes): Promise<void>;
+    /** Drops every pin. Exposed so a test can leave the workspace as it found it. */
+    clearPins(): Promise<void>;
     /** Saves the current geometry for this workspace, bypassing the debounce. */
     rememberLayout(): Promise<void>;
     /** Puts a remembered geometry back. Resolves false when it does not apply. */
@@ -1585,10 +1745,11 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
     context.subscriptions.push(log);
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('columnkit.even', evenColumns),
+        vscode.commands.registerCommand('columnkit.even', () => evenColumns(context)),
         vscode.commands.registerCommand('columnkit.pickColumns', pickColumns),
         vscode.commands.registerCommand('columnkit.undoLayout', undoLayout),
         vscode.commands.registerCommand('columnkit.evenSplit', evenSplitHere),
+        vscode.commands.registerCommand('columnkit.pinColumn', () => togglePin(context)),
         vscode.commands.registerCommand('columnkit.setColumnWidth', (percent?: number) =>
             pickColumnWidth(typeof percent === 'number' ? percent : undefined)
         )
@@ -1613,6 +1774,10 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
         vscode.window.tabGroups.onDidChangeTabGroups(() => {
             guard.schedule();
             scheduleRemember(context);
+            // A new group takes its space from whatever was there, including a
+            // column the user pinned. Putting the pins back is the whole point
+            // of having them.
+            void enforcePins(context);
         }),
         // Tabs too, not just groups. The floor belongs to the pane a group is
         // showing, and opening one changes that without touching the group set:
@@ -1681,6 +1846,7 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
         checkForUpdate: (now?: number, fetch?: FetchRelease) => checkForUpdate(context, now, fetch),
         installUpdate: (update: UpdateDecision, download?: DownloadBytes) =>
             installUpdate(context, update, download),
+        clearPins: () => Promise.resolve(context.workspaceState.update(PINS_KEY, undefined)),
         rememberLayout: () => rememberLayout(context),
         restoreRememberedLayout: () => restoreRememberedLayout(context),
         subscriptionCount: () => context.subscriptions.length

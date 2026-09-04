@@ -8,6 +8,7 @@
     "command.undoLayout.title": "Undo ColumnKit Change",
     "command.setColumnWidth.title": "Set Active Column Width...",
     "command.evenSplit.title": "Even Out This Split",
+    "command.pinColumn.title": "Pin or Unpin This Column's Width",
     "command.columns2.title": "2 Columns",
     "command.columns3.title": "3 Columns",
     "command.columns4.title": "4 Columns",

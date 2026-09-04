@@ -59,6 +59,7 @@ Everything is in the palette under `ColumnKit`, if you'd rather type than click.
 - `ColumnKit: Undo ColumnKit Change`
 - `ColumnKit: Set Active Column Width...`
 - `ColumnKit: Even Out This Split`
+- `ColumnKit: Pin or Unpin This Column's Width`
 - `ColumnKit: 2 Columns`, `3`, `4`, `5`, `6` and `8 Columns`
 
 Counts the palette doesn't list, up to 12, are in the picker.
@@ -96,6 +97,8 @@ Set `columnkit.checkForUpdates` to `false` and none of it happens. That's the on
 The forks all carry the same bug and the same two layout commands, and they read extensions from Open VSX rather than the Marketplace. ColumnKit isn't published to either yet, so the `.vsix` from the GitHub release is the install path everywhere. Anything built on VS Code 1.100 or newer should work: Cursor, VSCodium, Windsurf and Kiro all qualify.
 
 ## Known limits
+
+`Pin or Unpin This Column's Width` fixes the focused column at the width it has now. `Even` then leaves it alone and shares the space among the others, and a new editor group takes its space from them too. The pin is soft, the way Vim's `winfixwidth` is: when the window genuinely runs out of room the pinned column gives ground rather than making the layout impossible. Pins are per workspace and survive a reload, and at least one column always has to stay unpinned to take up the slack.
 
 On a grid, `Even` still distributes every group in it. `Even Out This Split` is the finer version: it evens only the rows of the column you're in and leaves the column beside it untouched, the way `vertical wincmd =` does in Vim.
 

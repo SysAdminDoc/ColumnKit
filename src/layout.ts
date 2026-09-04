@@ -49,6 +49,9 @@ export function leafSpans(nodes: LayoutNode[]): number[] {
  * exactly that container and leave the rest of the tree alone.
  */
 function siblingsOf(nodes: LayoutNode[], leafIndex: number): LayoutNode[] | undefined {
+    if (leafIndex < 0) {
+        return undefined;
+    }
     let seen = 0;
     for (const node of nodes) {
         const span = leaves([node]).length;
@@ -92,6 +95,88 @@ export function evenSplit(layout: EditorLayout, leafIndex: number): EditorLayout
 /** Whether the leaf at `leafIndex` sits at the top level rather than in a branch. */
 export function isTopLevelLeaf(nodes: LayoutNode[], leafIndex: number): boolean {
     return siblingsOf(nodes, leafIndex) === nodes;
+}
+
+/** The sibling list holding `leafIndex`, for a caller that only reads it. */
+export function splitHolding(
+    nodes: LayoutNode[],
+    leafIndex: number
+): readonly LayoutNode[] | undefined {
+    return siblingsOf(nodes, leafIndex);
+}
+
+/**
+ * Widths with the pinned columns held at their size and the rest sharing what
+ * is left.
+ *
+ * `pins[i]` is the width column i is pinned to, or undefined when it is free.
+ *
+ * The pin is soft, which is what Vim's `winfixwidth` does and says so in its own
+ * documentation: it "may be changed anyway when running out of room". A hard pin
+ * turns any layout that no longer fits into a refusal, and refusing to open an
+ * editor is worse than a column that shrank. So when the free columns cannot
+ * clear their floors, the pins give ground proportionally, down to their own
+ * floors, and only a layout that cannot be satisfied at all is refused.
+ */
+export function withPinnedWidths(
+    sizes: number[],
+    pins: (number | undefined)[],
+    floors: number[]
+): number[] | undefined {
+    if (sizes.length === 0 || pins.length !== sizes.length || floors.length !== sizes.length) {
+        return undefined;
+    }
+    const total = sizes.reduce((a, b) => a + b, 0);
+    const free: number[] = [];
+    const pinned: number[] = [];
+    sizes.forEach((_, i) => (pins[i] === undefined ? free : pinned).push(i));
+
+    // Everything pinned leaves nothing to absorb the difference, and the widths
+    // would have to sum to the editor area by luck.
+    if (free.length === 0 || pinned.length === 0) {
+        return undefined;
+    }
+
+    // Strictly above the floor, since equality is what arms the expand.
+    const freeNeed = free.reduce((sum, i) => sum + floors[i] + 1, 0);
+    const pinnedNeed = pinned.reduce((sum, i) => sum + floors[i] + 1, 0);
+    if (total < freeNeed + pinnedNeed) {
+        return undefined;
+    }
+
+    let held = pinned.map(i => Math.max(floors[i] + 1, Math.round(pins[i] as number)));
+    const heldTotal = held.reduce((a, b) => a + b, 0);
+    if (heldTotal > total - freeNeed) {
+        // The pins yield, in proportion, but never below their own floors.
+        const room = total - freeNeed;
+        const spare = heldTotal - pinnedNeed;
+        const give = heldTotal - room;
+        held = held.map((width, at) => {
+            const i = pinned[at];
+            const share = spare > 0 ? Math.ceil(((width - floors[i] - 1) / spare) * give) : 0;
+            return Math.max(floors[i] + 1, width - share);
+        });
+    }
+
+    const next = sizes.slice();
+    held.forEach((width, at) => {
+        next[pinned[at]] = width;
+    });
+    const rest = weightedSizes(
+        total - held.reduce((a, b) => a + b, 0),
+        free.map(() => 1)
+    );
+    if (!rest) {
+        return undefined;
+    }
+    free.forEach((i, at) => {
+        next[i] = rest[at];
+    });
+
+    if (next.some((size, i) => size <= floors[i])) {
+        return undefined;
+    }
+    return next;
 }
 
 /** A geometry kept for a workspace, with what it was measured against. */
@@ -139,6 +224,15 @@ export const DEFAULT_FLOOR = 220;
 
 /** SettingsEditor2 overrides the minimum with its own `EDITOR_MIN_WIDTH`. */
 export const SETTINGS_FLOOR = 500;
+
+/**
+ * The other half of `DEFAULT_EDITOR_MIN_DIMENSIONS`.
+ *
+ * doRestoreGroup expands on `viewSize.height === group.minimumHeight` just as
+ * readily as on the width, so a stack of rows squeezed onto 70 is armed exactly
+ * the way a column on 220 is.
+ */
+export const DEFAULT_HEIGHT_FLOOR = 70;
 
 /**
  * Editor area width in CSS pixels, or undefined when the layout cannot say.
@@ -312,6 +406,14 @@ export interface Correction {
  */
 export function weightedSizes(total: number, weights: number[]): number[] | undefined {
     if (weights.length === 0 || !weights.every(weight => weight > 0 && Number.isFinite(weight))) {
+        return undefined;
+    }
+    // A fractional total cannot be split into whole pixels that add back up to
+    // it, and the only way one arrives here is a layout that has not been laid
+    // out yet, whose sizes are still the raw weights they were written with.
+    // Refusing says so; carrying on returned sizes of zero and a total that
+    // drifted.
+    if (!Number.isInteger(total) || total <= 0) {
         return undefined;
     }
     const sum = weights.reduce((a, b) => a + b, 0);

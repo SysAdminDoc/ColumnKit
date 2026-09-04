@@ -41,6 +41,12 @@
         "icon": "$(discard)"
       },
       {
+        "command": "columnkit.pinColumn",
+        "title": "%command.pinColumn.title%",
+        "category": "%category%",
+        "icon": "$(pin)"
+      },
+      {
         "command": "columnkit.evenSplit",
         "title": "%command.evenSplit.title%",
         "category": "%category%",

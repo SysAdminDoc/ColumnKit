@@ -525,6 +525,65 @@ suite('FloorGuard', () => {
         assert.strictEqual(columnKit.floorGuard.polling, false, 'the timer outlived the setting');
     });
 
+    test('a pinned column keeps its width through Even and through a new group', async function () {
+        // CK-18. The feature nobody in the ecosystem ships, and the thing
+        // evenEditorWidths cannot do: it redistributes every group in the grid.
+        this.timeout(30000);
+        const columnKit = await api();
+        const PINNED = 400;
+
+        try {
+            await quietly(async () => {
+                const width = (await settle()).reduce((a, b) => a + b, 0);
+                assert.ok(width - PINNED >= FLOOR, `editor area ${width} too narrow for this setup`);
+                await vscode.commands.executeCommand('vscode.setEditorLayout', {
+                    orientation: 0,
+                    groups: [{ size: PINNED }, { size: width - PINNED }]
+                });
+                return settle();
+            });
+            await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+            await new Promise(resolve => setTimeout(resolve, 200));
+
+            await vscode.commands.executeCommand('columnkit.pinColumn');
+            assert.match(columnKit.lastNotification()?.message ?? '', /pinned at/);
+
+            await vscode.commands.executeCommand('columnkit.even');
+            await new Promise(resolve => setTimeout(resolve, 400));
+            const evened = await settle();
+            assert.strictEqual(
+                evened[0],
+                PINNED,
+                `Even moved the pinned column: ${JSON.stringify(evened)}`
+            );
+
+            // A third column has to take its space from the unpinned one.
+            await vscode.commands.executeCommand('vscode.setEditorLayout', {
+                orientation: 0,
+                groups: [{ size: 1 }, { size: 1 }, { size: 1 }]
+            });
+            await settle();
+            for (let waited = 0; waited < 4000; waited += 200) {
+                if ((await settle())[0] === PINNED) {
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+            const opened = await settle();
+            assert.strictEqual(
+                opened[0],
+                PINNED,
+                `the new group took space from the pinned column: ${JSON.stringify(opened)}`
+            );
+            assert.ok(
+                Math.abs(opened[1] - opened[2]) <= 1,
+                `the free columns were not evened: ${JSON.stringify(opened)}`
+            );
+        } finally {
+            await columnKit.clearPins();
+        }
+    });
+
     test('puts a remembered layout back, and only when asked to', async function () {
         // CK-22. Stored per workspace against the width it was measured at.
         this.timeout(30000);

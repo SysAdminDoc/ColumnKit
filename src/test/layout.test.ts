@@ -15,7 +15,8 @@ import {
     measureEditorWidth,
     requiredWidth,
     weightedSizes,
-    withColumnShare
+    withColumnShare,
+    withPinnedWidths
 } from '../layout';
 import { describeColumnChange } from '../extension';
 
@@ -591,6 +592,92 @@ suite('evenSplit', () => {
             next.groups[0].groups?.reduce((sum, n) => sum + (n.size ?? 0), 0),
             400
         );
+    });
+});
+
+suite('withPinnedWidths', () => {
+    const floors = (n: number) => Array.from({ length: n }, () => DEFAULT_FLOOR);
+    const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+    test('holds the pin and evens the rest', () => {
+        // CK-18. This is what Even has to do once a column is pinned, and what
+        // evenEditorWidths cannot: it distributes everything.
+        const next = withPinnedWidths([400, 300, 500], [500, undefined, undefined], floors(3));
+        assert.deepStrictEqual(next, [500, 350, 350]);
+    });
+
+    test('holds two pins at once', () => {
+        const next = withPinnedWidths([400, 300, 500, 400], [500, undefined, 300, undefined], floors(4));
+        assert.ok(next);
+        assert.strictEqual(next[0], 500);
+        assert.strictEqual(next[2], 300);
+        assert.strictEqual(next[1], next[3]);
+        assert.strictEqual(sum(next), 1600);
+    });
+
+    test('preserves the total exactly', () => {
+        for (let total = 900; total <= 3000; total += 53) {
+            const sizes = [Math.floor(total / 2), Math.floor(total / 4), total - Math.floor(total / 2) - Math.floor(total / 4)];
+            const next = withPinnedWidths(sizes, [400, undefined, undefined], floors(3));
+            if (next) {
+                assert.strictEqual(sum(next), total, `total moved at ${total}`);
+            }
+        }
+    });
+
+    test('the pin gives ground rather than making the layout unsatisfiable', () => {
+        // Vim says the same of winfixwidth: it "may be changed anyway when
+        // running out of room". Refusing to fit an editor is worse than a
+        // column that shrank.
+        // 900 total: two free columns need 221 each, leaving 458 for a pin
+        // asking for 600.
+        const next = withPinnedWidths([600, 150, 150], [600, undefined, undefined], floors(3));
+        assert.ok(next, 'a pin that cannot be honoured must yield, not refuse');
+        assert.ok(next[0] < 600, `the pin did not give any ground: ${JSON.stringify(next)}`);
+        assert.ok(next[1] > DEFAULT_FLOOR && next[2] > DEFAULT_FLOOR, JSON.stringify(next));
+        assert.strictEqual(sum(next), 900);
+    });
+
+    test('never yields below its own floor', () => {
+        // 663 is exactly three columns' worth of minimum plus a pixel each, so
+        // the pin has to come all the way down and stop dead on its floor.
+        const next = withPinnedWidths([600, 33, 30], [600, undefined, undefined], floors(3));
+        assert.ok(next, JSON.stringify(next));
+        assert.strictEqual(sum(next), 663);
+        for (const size of next) {
+            assert.ok(size > DEFAULT_FLOOR, `left at ${size}: ${JSON.stringify(next)}`);
+        }
+    });
+
+    test('refuses a layout that cannot be satisfied at all', () => {
+        // Three columns needing 221 each cannot come out of 600.
+        assert.strictEqual(
+            withPinnedWidths([200, 200, 200], [300, undefined, undefined], floors(3)),
+            undefined
+        );
+    });
+
+    test('refuses when nothing is free to take up the slack', () => {
+        assert.strictEqual(withPinnedWidths([400, 400], [400, 400], floors(2)), undefined);
+        assert.strictEqual(
+            withPinnedWidths([400, 400], [undefined, undefined], floors(2)),
+            undefined,
+            'no pins at all means there is nothing for this to do'
+        );
+    });
+
+    test('honours a column with a wider floor of its own', () => {
+        const mixed = [DEFAULT_FLOOR, SETTINGS_FLOOR, DEFAULT_FLOOR];
+        const next = withPinnedWidths([900, 600, 300], [900, undefined, undefined], mixed);
+        if (next) {
+            assert.ok(next[1] > SETTINGS_FLOOR, `Settings column left at ${next[1]}`);
+        }
+    });
+
+    test('refuses lists that do not line up', () => {
+        assert.strictEqual(withPinnedWidths([400, 400], [400], floors(2)), undefined);
+        assert.strictEqual(withPinnedWidths([400, 400], [400, undefined], floors(3)), undefined);
+        assert.strictEqual(withPinnedWidths([], [], []), undefined);
     });
 });
 

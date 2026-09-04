@@ -42,6 +42,58 @@ export function leafSpans(nodes: LayoutNode[]): number[] {
     return nodes.map(node => leaves([node]).length);
 }
 
+/**
+ * The sibling list the leaf at `leafIndex` sits directly in.
+ *
+ * Returned by reference into `nodes`, so a caller working on a copy can resize
+ * exactly that container and leave the rest of the tree alone.
+ */
+function siblingsOf(nodes: LayoutNode[], leafIndex: number): LayoutNode[] | undefined {
+    let seen = 0;
+    for (const node of nodes) {
+        const span = leaves([node]).length;
+        if (leafIndex < seen + span) {
+            return node.groups && node.groups.length > 0
+                ? siblingsOf(node.groups, leafIndex - seen)
+                : nodes;
+        }
+        seen += span;
+    }
+    return undefined;
+}
+
+/**
+ * Equalizes only the split the given group is part of.
+ *
+ * `workbench.action.evenEditorWidths` distributes every group in the grid,
+ * which is too blunt on a 2D layout: evening one column's two rows should not
+ * touch the column beside it. Vim has `vertical wincmd =` and tmux has
+ * `select-layout -E` for the same reason.
+ *
+ * Returns a whole new layout, so the caller writes the tree back intact.
+ */
+export function evenSplit(layout: EditorLayout, leafIndex: number): EditorLayout | undefined {
+    const clone = JSON.parse(JSON.stringify(layout)) as EditorLayout;
+    const siblings = siblingsOf(clone.groups, leafIndex);
+    if (!siblings || siblings.length < 2) {
+        return undefined;
+    }
+    const total = siblings.reduce((sum, node) => sum + (node.size ?? 0), 0);
+    const shares = weightedSizes(total, siblings.map(() => 1));
+    if (!shares) {
+        return undefined;
+    }
+    siblings.forEach((node, i) => {
+        node.size = shares[i];
+    });
+    return clone;
+}
+
+/** Whether the leaf at `leafIndex` sits at the top level rather than in a branch. */
+export function isTopLevelLeaf(nodes: LayoutNode[], leafIndex: number): boolean {
+    return siblingsOf(nodes, leafIndex) === nodes;
+}
+
 /** How far above the floor a corrected column is placed. */
 export const CORRECTION_MARGIN = 24;
 

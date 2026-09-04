@@ -8,8 +8,10 @@ import {
     TabPlacement,
     LayoutNode,
     correctFloor,
+    evenSplit,
     floorRisk,
     isFlat,
+    isTopLevelLeaf,
     leafSpans,
     leaves,
     maxColumns,
@@ -743,6 +745,58 @@ async function keepingEmptyGroups<T>(restore: () => Promise<T>): Promise<T> {
     }
 }
 
+/**
+ * Evens only the split the active group belongs to.
+ *
+ * On a flat row that is the same thing as Even. On a grid it is not: evening
+ * one column's rows should leave the column beside it exactly as it was.
+ */
+async function evenSplitHere(): Promise<void> {
+    const layout = await readLayout();
+    if (!layout) {
+        notify(vscode.l10n.t('ColumnKit: could not read the layout.'), 3000);
+        return;
+    }
+    const total = leaves(layout.groups).length;
+    const leafIndex = activeColumnIndex(total);
+    if (leafIndex === undefined) {
+        notify(vscode.l10n.t('ColumnKit: could not tell which group is active.'), 4000);
+        return;
+    }
+
+    const next = evenSplit(layout, leafIndex);
+    if (!next) {
+        notify(vscode.l10n.t('ColumnKit: this group has nothing to even out against.'), 4000);
+        return;
+    }
+    // Only a top-level split is widths, and only widths have the 220 floor.
+    if (layout.orientation === 0 && isTopLevelLeaf(layout.groups, leafIndex)) {
+        const floors = floorsForNodes(next.groups);
+        if (next.groups.some((node, i) => (node.size ?? 0) <= floors[i].floor)) {
+            notify(
+                vscode.l10n.t(
+                    'ColumnKit: evening these would put a column at the minimum width, where a click expands it.'
+                ),
+                5000
+            );
+            return;
+        }
+    }
+
+    history.record({ layout });
+    floorGuard?.beginHold();
+    try {
+        await vscode.commands.executeCommand('vscode.setEditorLayout', next);
+    } catch {
+        history.pop();
+        notify(vscode.l10n.t('ColumnKit: could not even out this split.'), 3000);
+        return;
+    } finally {
+        floorGuard?.endHold(UNDO_SETTLE_MS);
+    }
+    notify(vscode.l10n.t('ColumnKit: this split is evened.'), 3000);
+}
+
 async function undoLayout(): Promise<void> {
     const previous = history.pop();
     if (!previous) {
@@ -1465,6 +1519,7 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
         vscode.commands.registerCommand('columnkit.even', evenColumns),
         vscode.commands.registerCommand('columnkit.pickColumns', pickColumns),
         vscode.commands.registerCommand('columnkit.undoLayout', undoLayout),
+        vscode.commands.registerCommand('columnkit.evenSplit', evenSplitHere),
         vscode.commands.registerCommand('columnkit.setColumnWidth', (percent?: number) =>
             pickColumnWidth(typeof percent === 'number' ? percent : undefined)
         )

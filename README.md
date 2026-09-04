@@ -57,6 +57,7 @@ Everything is in the palette under `ColumnKit`, if you'd rather type than click.
 - `ColumnKit: Set Column Count...`
 - `ColumnKit: Undo ColumnKit Change`
 - `ColumnKit: Set Active Column Width...`
+- `ColumnKit: Even Out This Split`
 - `ColumnKit: 2 Columns`, `3`, `4`, `5`, `6` and `8 Columns`
 
 Counts the palette doesn't list, up to 12, are in the picker.
@@ -94,6 +95,8 @@ Set `columnkit.checkForUpdates` to `false` and none of it happens. That's the on
 The forks all carry the same bug and the same two layout commands, and they read extensions from Open VSX rather than the Marketplace. ColumnKit isn't published to either yet, so the `.vsix` from the GitHub release is the install path everywhere. Anything built on VS Code 1.100 or newer should work: Cursor, VSCodium, Windsurf and Kiro all qualify.
 
 ## Known limits
+
+On a grid, `Even` still distributes every group in it. `Even Out This Split` is the finer version: it evens only the rows of the column you're in and leaves the column beside it untouched, the way `vertical wincmd =` does in Vim.
 
 The numbered counts write a flat row of columns, so asking for one on a grid that has a column split into rows will flatten it. `Even` and the automatic correction both leave a grid alone.
 

@@ -41,6 +41,12 @@
         "icon": "$(discard)"
       },
       {
+        "command": "columnkit.evenSplit",
+        "title": "%command.evenSplit.title%",
+        "category": "%category%",
+        "icon": "$(split-vertical)"
+      },
+      {
         "command": "columnkit.setColumnWidth",
         "title": "%command.setColumnWidth.title%",
         "category": "%category%",

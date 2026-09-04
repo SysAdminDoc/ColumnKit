@@ -359,6 +359,55 @@ suite('FloorGuard', () => {
         assert.strictEqual((await settle())[1], SETTINGS_FLOOR + CORRECTION_MARGIN);
     });
 
+    test('evens one column of a grid and leaves the other exactly as it was', async function () {
+        // CK-20. evenEditorWidths distributes the whole grid, so there was no
+        // way to tidy one column's rows without disturbing its neighbour.
+        this.timeout(30000);
+        const columnKit = await api();
+        const before = await quietly(async () => {
+            const width = (await settle()).reduce((a, b) => a + b, 0);
+            const half = Math.floor(width / 2);
+            await vscode.commands.executeCommand('vscode.setEditorLayout', {
+                orientation: 0,
+                groups: [
+                    { size: half, groups: [{ size: 100 }, { size: 300 }] },
+                    { size: width - half, groups: [{ size: 120 }, { size: 280 }] }
+                ]
+            });
+            await settle();
+            return vscode.commands.executeCommand<EditorLayout>('vscode.getEditorLayout');
+        });
+        assert.strictEqual(before.groups.length, 2, 'setup did not produce two columns');
+        assert.strictEqual(before.groups[0].groups?.length, 2, 'setup did not split them');
+
+        await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+        await new Promise(resolve => setTimeout(resolve, 200));
+        columnKit.floorGuard.resume();
+
+        await vscode.commands.executeCommand('columnkit.evenSplit');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        const after = await vscode.commands.executeCommand<EditorLayout>('vscode.getEditorLayout');
+
+        const rows = (layout: EditorLayout, column: number) =>
+            layout.groups[column].groups?.map(node => node.size);
+        const evened = rows(after, 0)!;
+        assert.strictEqual(evened.length, 2);
+        assert.ok(
+            Math.abs((evened[0] ?? 0) - (evened[1] ?? 0)) <= 1,
+            `the active column's rows were not evened: ${JSON.stringify(evened)}`
+        );
+        assert.deepStrictEqual(
+            rows(after, 1),
+            rows(before, 1),
+            'the other column was disturbed'
+        );
+        assert.deepStrictEqual(
+            after.groups.map(node => node.size),
+            before.groups.map(node => node.size),
+            'the column widths moved'
+        );
+    });
+
     test('gives the active column the share it was asked for', async function () {
         // CK-19. A count is not always what someone means; "half the width" is.
         this.timeout(30000);

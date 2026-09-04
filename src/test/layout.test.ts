@@ -5,8 +5,10 @@ import {
     SETTINGS_FLOOR,
     LayoutHistory,
     correctFloor,
+    evenSplit,
     floorRisk,
     isFlat,
+    isTopLevelLeaf,
     leaves,
     maxColumns,
     measureEditorWidth,
@@ -522,6 +524,81 @@ suite('withColumnShare', () => {
         assert.strictEqual(withColumnShare([300, 300], 0, 0, 'even', floors(2)), undefined);
         assert.strictEqual(withColumnShare([300, 300], 0, 100, 'even', floors(2)), undefined);
         assert.strictEqual(withColumnShare([300, 300], 0, 50, 'even', floors(3)), undefined);
+    });
+});
+
+suite('evenSplit', () => {
+    // A 2x2 grid: two columns, each split into two uneven rows.
+    const grid = () => ({
+        orientation: 0 as const,
+        groups: [
+            { size: 400, groups: [{ size: 100 }, { size: 300 }] },
+            { size: 600, groups: [{ size: 150 }, { size: 250 }] }
+        ]
+    });
+
+    test('evens the rows of the column the group is in, and nothing else', () => {
+        // CK-20. evenEditorWidths distributes the whole grid, which is too
+        // blunt: the other column should not move at all.
+        const next = evenSplit(grid(), 0);
+        assert.ok(next);
+        assert.deepStrictEqual(next.groups[0].groups?.map(n => n.size), [200, 200]);
+        assert.deepStrictEqual(
+            next.groups[1],
+            grid().groups[1],
+            'the other column was touched'
+        );
+        assert.deepStrictEqual(
+            next.groups.map(n => n.size),
+            [400, 600],
+            'the column widths should not have moved'
+        );
+    });
+
+    test('evens the second column when the group is in that one', () => {
+        const next = evenSplit(grid(), 2);
+        assert.ok(next);
+        assert.deepStrictEqual(next.groups[1].groups?.map(n => n.size), [200, 200]);
+        assert.deepStrictEqual(next.groups[0], grid().groups[0], 'the first column was touched');
+    });
+
+    test('evens the columns when the group is a column of its own', () => {
+        const layout = {
+            orientation: 0 as const,
+            groups: [{ size: 100 }, { size: 500 }, { size: 300 }]
+        };
+        const next = evenSplit(layout, 1);
+        assert.ok(next);
+        assert.deepStrictEqual(next.groups.map(n => n.size), [300, 300, 300]);
+    });
+
+    test('leaves the input untouched', () => {
+        const layout = grid();
+        evenSplit(layout, 0);
+        assert.deepStrictEqual(layout, grid(), 'the caller\'s layout was mutated');
+    });
+
+    test('refuses a split of one, and an index that is not there', () => {
+        assert.strictEqual(evenSplit({ orientation: 0, groups: [{ size: 900 }] }, 0), undefined);
+        assert.strictEqual(evenSplit(grid(), 9), undefined);
+    });
+
+    test('preserves the total of the split it evens', () => {
+        const next = evenSplit(grid(), 0);
+        assert.ok(next);
+        assert.strictEqual(
+            next.groups[0].groups?.reduce((sum, n) => sum + (n.size ?? 0), 0),
+            400
+        );
+    });
+});
+
+suite('isTopLevelLeaf', () => {
+    test('tells a column apart from a group inside one', () => {
+        const layout = [{ size: 400, groups: [{ size: 100 }, { size: 300 }] }, { size: 600 }];
+        assert.strictEqual(isTopLevelLeaf(layout, 0), false);
+        assert.strictEqual(isTopLevelLeaf(layout, 1), false);
+        assert.strictEqual(isTopLevelLeaf(layout, 2), true);
     });
 });
 

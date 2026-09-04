@@ -12,17 +12,20 @@ import {
     RememberedLayout,
     balance,
     canRestore,
+    decodeLayout,
+    encodeLayout,
     correctFloor,
     evenSplit,
     floorRisk,
     isFlat,
-    isTopLevelLeaf,
     leafSpans,
     leaves,
     maxColumns,
     measureEditorWidth,
     RemainderStrategy,
+    splitDepth,
     splitHolding,
+    splitIsWidths,
     withPinnedWidths,
     withColumnShare
 } from './layout';
@@ -661,6 +664,7 @@ function plural(n: number, one: string, many: string): string {
 }
 
 const COLUMNS = ['{0} column', '{0} columns'] as const;
+const GROUPS = ['{0} group', '{0} groups'] as const;
 const EMPTY_COLUMNS = ['{0} empty column', '{0} empty columns'] as const;
 
 /**
@@ -973,10 +977,10 @@ async function keepingEmptyGroups<T>(restore: () => Promise<T>): Promise<T> {
  * On a flat row that is the same thing as Even. On a grid it is not: evening
  * one column's rows should leave the column beside it exactly as it was.
  */
-/** Whether every row of the split holding `leafIndex` clears the height floor. */
-function clearsHeightFloor(layout: EditorLayout, leafIndex: number): boolean {
-    const rows = splitHolding(layout.groups, leafIndex);
-    return rows !== undefined && rows.every(node => (node.size ?? 0) > DEFAULT_HEIGHT_FLOOR);
+/** Whether every member of the split holding `leafIndex` clears `floor`. */
+function clearsFloor(layout: EditorLayout, leafIndex: number, floor: number): boolean {
+    const siblings = splitHolding(layout.groups, leafIndex);
+    return siblings !== undefined && siblings.every(node => (node.size ?? 0) > floor);
 }
 
 async function evenSplitHere(): Promise<void> {
@@ -1006,8 +1010,20 @@ async function evenSplitHere(): Promise<void> {
         return;
     }
 
-    const atTopLevel = layout.orientation === 0 && isTopLevelLeaf(layout.groups, leafIndex);
-    if (atTopLevel) {
+    // Which axis this split runs along decides which minimum applies, and that
+    // alternates with depth rather than following the top-level orientation.
+    // doRestoreGroup expands on the height matching minimumHeight just as
+    // readily as on the width, so both have to be checked.
+    const depth = splitDepth(layout.groups, leafIndex);
+    if (depth === undefined) {
+        notify(vscode.l10n.t('ColumnKit: this group has nothing to even out against.'), 4000);
+        return;
+    }
+    const widths = splitIsWidths(layout.orientation, depth);
+
+    if (widths && depth === 0) {
+        // Only the top level maps onto the tab groups, so only there can the
+        // real per-pane minimums be read.
         const floors = floorsForNodes(next.groups);
         if (!floors || next.groups.some((node, i) => (node.size ?? 0) <= floors[i].floor)) {
             notify(
@@ -1018,14 +1034,15 @@ async function evenSplitHere(): Promise<void> {
             );
             return;
         }
-    } else if (!clearsHeightFloor(next, leafIndex)) {
-        // Rows answer to minimumHeight, and doRestoreGroup expands on that just
-        // as readily. Evening twelve rows into a short column would arm every
-        // one of them, which is the defect this command must not create.
+    } else if (!clearsFloor(next, leafIndex, widths ? DEFAULT_FLOOR : DEFAULT_HEIGHT_FLOOR)) {
         notify(
-            vscode.l10n.t(
-                'ColumnKit: evening these would put a row at the minimum height, where a click expands it.'
-            ),
+            widths
+                ? vscode.l10n.t(
+                    'ColumnKit: evening these would put a column at the minimum width, where a click expands it.'
+                )
+                : vscode.l10n.t(
+                    'ColumnKit: evening these would put a row at the minimum height, where a click expands it.'
+                ),
             5000
         );
         return;
@@ -1043,6 +1060,67 @@ async function evenSplitHere(): Promise<void> {
         floorGuard?.endHold(WRITE_SETTLE_MS);
     }
     notify(vscode.l10n.t('ColumnKit: this split is evened.'), 3000);
+}
+
+async function copyLayout(): Promise<void> {
+    const layout = await readLayout();
+    const text = layout && encodeLayout(layout);
+    if (!text) {
+        notify(vscode.l10n.t('ColumnKit: the columns have not settled yet, try again.'), 3000);
+        return;
+    }
+    await vscode.env.clipboard.writeText(text);
+    notify(vscode.l10n.t('ColumnKit: layout copied to the clipboard.'), 3000);
+}
+
+/**
+ * Applies a layout string from the clipboard.
+ *
+ * Refuses a group count that does not match what is open. Applying one with
+ * more groups would silently add empty columns, and one with fewer would merge
+ * editors into another column, neither of which is what someone pasting a
+ * geometry is asking for.
+ */
+async function pasteLayout(): Promise<void> {
+    const text = await vscode.env.clipboard.readText();
+    const incoming = decodeLayout(text);
+    if (!incoming) {
+        notify(
+            vscode.l10n.t('ColumnKit: the clipboard does not hold a ColumnKit layout, or it was damaged in transit.'),
+            5000
+        );
+        return;
+    }
+
+    const current = await readLayout();
+    const open = current ? leaves(current.groups).length : currentColumnCount();
+    const wanted = leaves(incoming.groups).length;
+    if (wanted !== open) {
+        notify(
+            vscode.l10n.t(
+                'ColumnKit: that layout is for {0}, and you have {1} open.',
+                plural(wanted, ...GROUPS),
+                open
+            ),
+            6000
+        );
+        return;
+    }
+
+    if (current) {
+        history.record({ layout: current });
+    }
+    floorGuard?.beginHold();
+    try {
+        await vscode.commands.executeCommand('vscode.setEditorLayout', incoming);
+    } catch {
+        history.pop();
+        notify(vscode.l10n.t('ColumnKit: could not apply that layout.'), 3000);
+        return;
+    } finally {
+        floorGuard?.endHold(WRITE_SETTLE_MS);
+    }
+    notify(vscode.l10n.t('ColumnKit: layout applied.'), 3000);
 }
 
 async function undoLayout(): Promise<void> {
@@ -1838,6 +1916,8 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
         vscode.commands.registerCommand('columnkit.pickColumns', pickColumns),
         vscode.commands.registerCommand('columnkit.undoLayout', undoLayout),
         vscode.commands.registerCommand('columnkit.evenSplit', evenSplitHere),
+        vscode.commands.registerCommand('columnkit.copyLayout', copyLayout),
+        vscode.commands.registerCommand('columnkit.pasteLayout', pasteLayout),
         vscode.commands.registerCommand('columnkit.pinColumn', () => togglePin(context)),
         vscode.commands.registerCommand('columnkit.setColumnWidth', (percent?: number) =>
             pickColumnWidth(typeof percent === 'number' ? percent : undefined)

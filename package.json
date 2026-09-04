@@ -53,6 +53,18 @@
         "icon": "$(split-vertical)"
       },
       {
+        "command": "columnkit.copyLayout",
+        "title": "%command.copyLayout.title%",
+        "category": "%category%",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "columnkit.pasteLayout",
+        "title": "%command.pasteLayout.title%",
+        "category": "%category%",
+        "icon": "$(clone)"
+      },
+      {
         "command": "columnkit.setColumnWidth",
         "title": "%command.setColumnWidth.title%",
         "category": "%category%",

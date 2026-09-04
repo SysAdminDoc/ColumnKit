@@ -139,9 +139,164 @@ export function balance(layout: EditorLayout, mode: BalanceMode): EditorLayout |
     return clone;
 }
 
+/**
+ * Text form of a layout, so a geometry can be shared, diffed or kept in notes.
+ *
+ * `ck1:h:300,600(100,500):1f4a` is two columns, the second split into two rows,
+ * followed by a checksum. tmux does the same thing and for the same reason: a
+ * layout string that has been through a chat window or a wrapped email is
+ * usually damaged, and applying half of one is worse than refusing it.
+ *
+ * Deliberately not base64. It stays readable, and it keeps this file free of
+ * Buffer, which the web extension host does not have.
+ */
+export const LAYOUT_PREFIX = 'ck1:';
+
+function encodeNodes(nodes: LayoutNode[]): string {
+    return nodes
+        .map(node => {
+            const size = Math.round(node.size ?? 0);
+            const children =
+                node.groups && node.groups.length > 0 ? `(${encodeNodes(node.groups)})` : '';
+            return `${size}${children}`;
+        })
+        .join(',');
+}
+
+/** 16 bits over the body, which is what tmux uses and is enough to catch a mangle. */
+function checksum(body: string): string {
+    let sum = 0;
+    for (let i = 0; i < body.length; i++) {
+        sum = (sum + body.charCodeAt(i) * (i + 1)) & 0xffff;
+    }
+    return sum.toString(16).padStart(4, '0');
+}
+
+export function encodeLayout(layout: EditorLayout): string | undefined {
+    const sizes = leaves(layout.groups).map(node => node.size ?? 0);
+    if (layout.groups.length === 0 || sizes.some(size => size < 1)) {
+        // Raw weights from a layout that has not been laid out. Copying those
+        // hands someone a string that means nothing.
+        return undefined;
+    }
+    const body = `${layout.orientation === 1 ? 'v' : 'h'}:${encodeNodes(layout.groups)}`;
+    return `${LAYOUT_PREFIX}${body}:${checksum(body)}`;
+}
+
+/** Recursive descent over `digits ( '(' nodes ')' )?`, comma separated. */
+function parseNodes(text: string, at: { i: number }): LayoutNode[] | undefined {
+    const nodes: LayoutNode[] = [];
+    for (;;) {
+        const start = at.i;
+        while (at.i < text.length && text[at.i] >= '0' && text[at.i] <= '9') {
+            at.i++;
+        }
+        if (at.i === start) {
+            return undefined;
+        }
+        const node: LayoutNode = { size: Number(text.slice(start, at.i)) };
+        if (text[at.i] === '(') {
+            at.i++;
+            const children = parseNodes(text, at);
+            if (!children || text[at.i] !== ')') {
+                return undefined;
+            }
+            at.i++;
+            node.groups = children;
+        }
+        nodes.push(node);
+        if (text[at.i] !== ',') {
+            return nodes;
+        }
+        at.i++;
+    }
+}
+
+/**
+ * A layout from its text form, or undefined for anything that is not exactly
+ * one.
+ *
+ * Nothing partial is ever returned: a truncated or edited string fails the
+ * checksum or the grammar and the caller is told, rather than being handed a
+ * layout that is missing a column.
+ */
+export function decodeLayout(text: string): EditorLayout | undefined {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith(LAYOUT_PREFIX)) {
+        return undefined;
+    }
+    const rest = trimmed.slice(LAYOUT_PREFIX.length);
+    const split = rest.lastIndexOf(':');
+    if (split < 0) {
+        return undefined;
+    }
+    const body = rest.slice(0, split);
+    if (checksum(body) !== rest.slice(split + 1).toLowerCase()) {
+        return undefined;
+    }
+    if (body[1] !== ':' || (body[0] !== 'h' && body[0] !== 'v')) {
+        return undefined;
+    }
+
+    const at = { i: 0 };
+    const groups = parseNodes(body.slice(2), at);
+    // Trailing junk that happened to check out still means the string is not
+    // one of ours.
+    if (!groups || at.i !== body.length - 2 || groups.length === 0) {
+        return undefined;
+    }
+    if (leaves(groups).some(node => (node.size ?? 0) < 1)) {
+        return undefined;
+    }
+    return { orientation: body[0] === 'v' ? 1 : 0, groups };
+}
+
 /** Whether the leaf at `leafIndex` sits at the top level rather than in a branch. */
 export function isTopLevelLeaf(nodes: LayoutNode[], leafIndex: number): boolean {
     return siblingsOf(nodes, leafIndex) === nodes;
+}
+
+/**
+ * How many branches deep the split holding `leafIndex` is, or undefined.
+ *
+ * The axis alternates with depth, so this is what says whether a sibling list's
+ * sizes are widths or heights. With orientation 0 the top level is widths and
+ * one level in is heights; with orientation 1 it is the other way round. Judging
+ * a nested split by its parent's orientation gets exactly half the cases wrong.
+ */
+export function splitDepth(nodes: LayoutNode[], leafIndex: number): number | undefined {
+    if (leafIndex < 0) {
+        return undefined;
+    }
+    let depth = 0;
+    let level = nodes;
+    let index = leafIndex;
+    for (;;) {
+        let seen = 0;
+        let stepped = false;
+        for (const node of level) {
+            const span = leaves([node]).length;
+            if (index < seen + span) {
+                if (node.groups && node.groups.length > 0) {
+                    level = node.groups;
+                    index -= seen;
+                    depth++;
+                    stepped = true;
+                    break;
+                }
+                return depth;
+            }
+            seen += span;
+        }
+        if (!stepped) {
+            return undefined;
+        }
+    }
+}
+
+/** Whether that split's sizes are widths rather than heights. */
+export function splitIsWidths(orientation: 0 | 1, depth: number): boolean {
+    return (orientation + depth) % 2 === 0;
 }
 
 /** The sibling list holding `leafIndex`, for a caller that only reads it. */
@@ -209,15 +364,22 @@ export function withPinnedWidths(
     held.forEach((width, at) => {
         next[pinned[at]] = width;
     });
-    const rest = weightedSizes(
-        total - held.reduce((a, b) => a + b, 0),
-        free.map(() => 1)
-    );
-    if (!rest) {
+
+    // Every free column gets clear of its own floor first, then the rest is
+    // shared equally. Splitting the remainder evenly and checking afterwards
+    // refused layouts that were perfectly satisfiable whenever the free columns
+    // had different floors: a Settings column needs 501 where its neighbour
+    // needs 221, and an even split gives them both the average.
+    const remaining = total - held.reduce((a, b) => a + b, 0);
+    const base = free.map(i => floors[i] + 1);
+    const spare = remaining - base.reduce((a, b) => a + b, 0);
+    if (spare < 0) {
         return undefined;
     }
+    const each = Math.floor(spare / free.length);
+    const leftover = spare - each * free.length;
     free.forEach((i, at) => {
-        next[i] = rest[at];
+        next[i] = base[at] + each + (at < leftover ? 1 : 0);
     });
 
     if (next.some((size, i) => size <= floors[i])) {

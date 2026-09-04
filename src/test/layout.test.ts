@@ -3,8 +3,11 @@ import {
     CORRECTION_MARGIN,
     DEFAULT_FLOOR,
     SETTINGS_FLOOR,
+    LAYOUT_PREFIX,
     LayoutHistory,
     balance,
+    decodeLayout,
+    encodeLayout,
     canRestore,
     correctFloor,
     evenSplit,
@@ -15,6 +18,8 @@ import {
     maxColumns,
     measureEditorWidth,
     requiredWidth,
+    splitDepth,
+    splitIsWidths,
     weightedSizes,
     withColumnShare,
     withPinnedWidths
@@ -613,6 +618,92 @@ suite('evenSplit', () => {
     });
 });
 
+suite('layout strings', () => {
+    const grid = () => ({
+        orientation: 0 as const,
+        groups: [
+            { size: 300 },
+            { size: 600, groups: [{ size: 100 }, { size: 500 }] }
+        ]
+    });
+
+    test('round-trips a flat row and a grid', () => {
+        for (const layout of [
+            { orientation: 0 as const, groups: [{ size: 400 }, { size: 500 }] },
+            { orientation: 1 as const, groups: [{ size: 200 }, { size: 300 }] },
+            grid()
+        ]) {
+            const text = encodeLayout(layout);
+            assert.ok(text, 'should have encoded');
+            assert.deepStrictEqual(decodeLayout(text), layout, text);
+        }
+    });
+
+    test('is readable, which is the point of not using base64', () => {
+        assert.match(encodeLayout(grid()) ?? '', /^ck1:h:300,600\(100,500\):[0-9a-f]{4}$/);
+    });
+
+    test('a second trip over its own output is stable', () => {
+        // Comparing a round trip against the round trip proves nothing; this
+        // compares against the original and then re-encodes.
+        const once = encodeLayout(grid())!;
+        const back = decodeLayout(once)!;
+        assert.deepStrictEqual(back, grid());
+        assert.strictEqual(encodeLayout(back), once);
+    });
+
+    test('rejects a string edited by one character', () => {
+        const text = encodeLayout(grid())!;
+        for (let i = LAYOUT_PREFIX.length; i < text.length; i++) {
+            const digit = text[i];
+            if (digit < '0' || digit > '9') {
+                continue;
+            }
+            const edited = text.slice(0, i) + ((Number(digit) + 1) % 10) + text.slice(i + 1);
+            assert.strictEqual(decodeLayout(edited), undefined, `accepted an edit at ${i}: ${edited}`);
+        }
+    });
+
+    test('rejects a truncated string rather than applying part of it', () => {
+        const text = encodeLayout(grid())!;
+        for (let cut = 1; cut < text.length; cut++) {
+            assert.strictEqual(
+                decodeLayout(text.slice(0, cut)),
+                undefined,
+                `accepted a truncation to ${cut}`
+            );
+        }
+    });
+
+    test('rejects anything that is not one of ours', () => {
+        for (const bad of [
+            '',
+            'hello',
+            'ck1:',
+            'ck1:h:300,600:0000',
+            'ck1:x:300,600:' ,
+            'ck1:h:300,(600):ffff',
+            'ck1:h:300,600(100,500)junk:1f4a'
+        ]) {
+            assert.strictEqual(decodeLayout(bad), undefined, `accepted ${JSON.stringify(bad)}`);
+        }
+    });
+
+    test('tolerates surrounding whitespace, which a paste often carries', () => {
+        const text = encodeLayout(grid())!;
+        assert.deepStrictEqual(decodeLayout(`\n  ${text}  \n`), grid());
+    });
+
+    test('refuses to encode a layout that has not been laid out', () => {
+        // Raw weights would hand someone a string that means nothing.
+        assert.strictEqual(
+            encodeLayout({ orientation: 0, groups: [{ size: 0.5 }, { size: 0.5 }] }),
+            undefined
+        );
+        assert.strictEqual(encodeLayout({ orientation: 0, groups: [] }), undefined);
+    });
+});
+
 suite('balance', () => {
     // CK-27. One full-height column beside a column split into two rows, which
     // is the smallest layout where the two rules disagree.
@@ -779,6 +870,29 @@ suite('withPinnedWidths', () => {
         }
     });
 
+    test('gets the free columns clear of their own floors before sharing out', () => {
+        // Splitting the remainder evenly and rejecting the result afterwards
+        // refused layouts that were perfectly satisfiable: a Settings column
+        // needs 501 where its neighbour needs 221, and an even split handed
+        // them both the average.
+        const next = withPinnedWidths([600, 300, 300], [undefined, 300, undefined], [
+            SETTINGS_FLOOR,
+            DEFAULT_FLOOR,
+            DEFAULT_FLOOR
+        ]);
+        assert.ok(next, 'a satisfiable layout was refused');
+        assert.strictEqual(next[1], 300, 'the pin moved');
+        assert.ok(next[0] > SETTINGS_FLOOR, `Settings column left at ${next[0]}`);
+        assert.ok(next[2] > DEFAULT_FLOOR, `ordinary column left at ${next[2]}`);
+        assert.strictEqual(next.reduce((a, b) => a + b, 0), 1200, 'total moved');
+    });
+
+    test('still shares equally when the free columns have the same floor', () => {
+        const next = withPinnedWidths([400, 300, 500], [400, undefined, undefined], floors(3));
+        assert.ok(next);
+        assert.strictEqual(next[1], next[2], 'equal floors should still mean equal widths');
+    });
+
     test('refuses lists that do not line up', () => {
         assert.strictEqual(withPinnedWidths([400, 400], [400], floors(2)), undefined);
         assert.strictEqual(withPinnedWidths([400, 400], [400, undefined], floors(3)), undefined);
@@ -830,6 +944,38 @@ suite('isTopLevelLeaf', () => {
         assert.strictEqual(isTopLevelLeaf(layout, 0), false);
         assert.strictEqual(isTopLevelLeaf(layout, 1), false);
         assert.strictEqual(isTopLevelLeaf(layout, 2), true);
+    });
+});
+
+suite('splitDepth and splitIsWidths', () => {
+    const layout = [
+        { size: 400, groups: [{ size: 100 }, { size: 300, groups: [{ size: 1 }, { size: 2 }] }] },
+        { size: 600 }
+    ];
+
+    test('counts how many branches deep a group sits', () => {
+        assert.strictEqual(splitDepth(layout, 0), 1);
+        assert.strictEqual(splitDepth(layout, 1), 2);
+        assert.strictEqual(splitDepth(layout, 2), 2);
+        assert.strictEqual(splitDepth(layout, 3), 0);
+    });
+
+    test('refuses an index that is not in the layout', () => {
+        assert.strictEqual(splitDepth(layout, 4), undefined);
+        assert.strictEqual(splitDepth(layout, -1), undefined);
+    });
+
+    test('the axis alternates with depth, from whichever way the top level runs', () => {
+        // The bug this exists for: a nested split under orientation 1 carries
+        // widths, and judging it by the top-level orientation called it heights,
+        // so it was checked against 70 instead of 220 and every column came out
+        // clamped onto the width that arms the expand.
+        assert.strictEqual(splitIsWidths(0, 0), true);
+        assert.strictEqual(splitIsWidths(0, 1), false);
+        assert.strictEqual(splitIsWidths(0, 2), true);
+        assert.strictEqual(splitIsWidths(1, 0), false);
+        assert.strictEqual(splitIsWidths(1, 1), true);
+        assert.strictEqual(splitIsWidths(1, 2), false);
     });
 });
 

@@ -61,6 +61,8 @@ Everything is in the palette under `ColumnKit`, if you'd rather type than click.
 - `ColumnKit: Set Active Column Width...`
 - `ColumnKit: Even Out This Split`
 - `ColumnKit: Pin or Unpin This Column's Width`
+- `ColumnKit: Copy Layout to Clipboard`
+- `ColumnKit: Apply Layout from Clipboard`
 - `ColumnKit: 2 Columns`, `3`, `4`, `5`, `6` and `8 Columns`
 
 Counts the palette doesn't list, up to 12, are in the picker.
@@ -99,6 +101,8 @@ Set `columnkit.checkForUpdates` to `false` and none of it happens. That's the on
 The forks all carry the same bug and the same two layout commands, and they read extensions from Open VSX rather than the Marketplace. ColumnKit isn't published to either yet, so the `.vsix` from the GitHub release is the install path everywhere. Anything built on VS Code 1.77 or newer should work, which every current fork is: Cursor, VSCodium, Windsurf and Kiro all qualify comfortably. 1.77 is where `vscode.getEditorLayout` arrived, and without that command there is nothing to read.
 
 ## Known limits
+
+A layout can be copied out as text and pasted back: `ck1:h:300,600(100,500):1f4a` is two columns with the second split in two. It's short enough to paste into a message or keep in notes. There's a checksum on the end, so a string that got wrapped or edited on the way is refused rather than half applied, and it only applies to a window that has the same number of groups open.
 
 `Pin or Unpin This Column's Width` fixes the focused column at the width it has now. `Even` then leaves it alone and shares the space among the others, and a new editor group takes its space from them too. The pin is soft, the way Vim's `winfixwidth` is: when the window genuinely runs out of room the pinned column gives ground rather than making the layout impossible. Pins are per workspace and survive a reload, and at least one column always has to stay unpinned to take up the slack.
 

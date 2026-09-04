@@ -77,7 +77,13 @@ rem path, including the one %~dp0 produces for a folder named "new!". Labels and
 rem a subroutine do the same job with none of that.
 if not exist "%SUMS%" goto :nosums
 
+rem Checked before :strip as well as after. With ACTUAL undefined, cmd leaves
+rem !ACTUAL: =! as the literal " =" and assigns that, so ACTUAL becomes defined
+rem and the gate below can never fire: a hash certutil could not compute was
+rem reported as "Checksum OK:  =" and the file installed. The integrity check
+rem has to fail closed.
 for /f "skip=1 delims=" %%H in ('certutil -hashfile "%VSIX%" SHA256') do if not defined ACTUAL set "ACTUAL=%%H"
+if not defined ACTUAL goto :nohash
 call :strip
 if not defined ACTUAL goto :nohash
 findstr /i /c:"%ACTUAL%" "%SUMS%" >nul
@@ -93,6 +99,7 @@ echo Installing: %VSIX%
 echo.
 
 set "FOUND=0"
+set "INSTALLED=0"
 call :install "code"   "Visual Studio Code"
 call :install "codium" "VSCodium"
 call :install "code-insiders" "VS Code Insiders"
@@ -102,6 +109,15 @@ call :install "windsurf" "Windsurf"
 if "%FOUND%"=="0" (
     echo [ERROR] No VS Code family editor found on PATH.
     echo         Open the editor, then: Extensions view -^> ... -^> Install from VSIX...
+    echo.
+    pause
+    exit /b 1
+)
+rem Every editor found and every one of them refused. Saying "Done." and
+rem exiting 0 there is a lie.
+if "%INSTALLED%"=="0" (
+    echo.
+    echo [ERROR] Every editor found refused the install. Nothing was installed.
     echo.
     pause
     exit /b 1
@@ -149,6 +165,7 @@ call %~1 --install-extension "%VSIX%" --force
 if errorlevel 1 (
     echo   [FAILED] %~2 returned an error.
 ) else (
+    set "INSTALLED=1"
     echo   [OK] %~2
 )
 exit /b 0

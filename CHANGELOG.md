@@ -40,6 +40,7 @@
 - Extension test suite (`npm test`), with a probe that pins down how `vscode.getEditorLayout` denominates group sizes.
 
 ### Changed
+- The minimum VS Code version drops from 1.100 to 1.77, which is where `vscode.getEditorLayout` arrived and so the oldest editor this can work in at all. Nothing in the extension needed 1.100.
 - `Undo Layout Change` is now `Undo ColumnKit Change`. It only ever reversed ColumnKit's own changes, and the old name suggested it would put back a sash you dragged yourself.
 - Every string the extension shows is ready to be translated. Manifest strings live in `package.nls.json`, the rest in `l10n/bundle.l10n.json`. Nothing changes in an English editor.
 - Collapsing to a single column used to report "1 columns".

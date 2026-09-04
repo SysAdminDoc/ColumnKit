@@ -97,6 +97,23 @@ suite('manifest', () => {
         );
     });
 
+    test('the pinned types match the version the manifest claims to support', () => {
+        // CK-9 and CK-36. A caret on @types/vscode defeats the engine guard
+        // entirely: npm resolves the newest types and tsc happily accepts an
+        // API that does not exist in the oldest editor the manifest admits.
+        const manifestOnDisk = JSON.parse(
+            fs.readFileSync(path.join(extension().extensionPath, 'package.json'), 'utf8')
+        ) as { engines: { vscode: string }; devDependencies: Record<string, string> };
+        const types = manifestOnDisk.devDependencies['@types/vscode'];
+
+        assert.doesNotMatch(types, /^[\^~]/, `@types/vscode must be pinned exactly, got ${types}`);
+        assert.strictEqual(
+            manifestOnDisk.engines.vscode,
+            `^${types}`,
+            'engines.vscode and the pinned @types/vscode have drifted apart'
+        );
+    });
+
     test('declares where translations live, or l10n.t can never load one', () => {
         // Without this the extension host returns early from
         // initializeLocalizedMessages and every l10n.t call is a permanent

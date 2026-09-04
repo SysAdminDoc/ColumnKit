@@ -2,7 +2,7 @@
 
 ![version](https://img.shields.io/badge/version-0.1.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![platform](https://img.shields.io/badge/platform-VS%20Code%201.100%2B-lightgrey)
+![platform](https://img.shields.io/badge/platform-VS%20Code%201.77%2B-lightgrey)
 
 Status bar buttons for editor column layout. Click one, your columns snap to an even width. No shortcuts to memorise.
 
@@ -95,7 +95,7 @@ Set `columnkit.checkForUpdates` to `false` and none of it happens. That's the on
 
 ## Other editors
 
-The forks all carry the same bug and the same two layout commands, and they read extensions from Open VSX rather than the Marketplace. ColumnKit isn't published to either yet, so the `.vsix` from the GitHub release is the install path everywhere. Anything built on VS Code 1.100 or newer should work: Cursor, VSCodium, Windsurf and Kiro all qualify.
+The forks all carry the same bug and the same two layout commands, and they read extensions from Open VSX rather than the Marketplace. ColumnKit isn't published to either yet, so the `.vsix` from the GitHub release is the install path everywhere. Anything built on VS Code 1.77 or newer should work, which every current fork is: Cursor, VSCodium, Windsurf and Kiro all qualify comfortably. 1.77 is where `vscode.getEditorLayout` arrived, and without that command there is nothing to read.
 
 ## Known limits
 

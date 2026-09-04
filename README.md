@@ -70,9 +70,16 @@ Everything is in the palette under `ColumnKit`, if you'd rather type than click.
 ```
 npm install
 npm run compile
+npm run build:web
 npm run lint
 npm run package
 ```
+
+There are two builds from the one source tree. `compile` produces the desktop
+one, plain files under `out/`. `build:web` bundles a single file for the web
+worker extension host, which has no module loader, so ColumnKit also runs in a
+browser. The update check does nothing there: a browser install comes from the
+Marketplace and updates itself.
 
 That drops a `.vsix` in `dist/`, named for the version in `package.json`, alongside `SHA256SUMS.txt` and a copy of `install.cmd`.
 

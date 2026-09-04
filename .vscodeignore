@@ -17,3 +17,5 @@ src/test/**
 out/test/**
 .vscode-test.mjs
 scripts/**
+eslint.config.mjs
+package-lock.json

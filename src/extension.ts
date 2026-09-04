@@ -590,6 +590,12 @@ async function checkForUpdate(
     if (!config().get<boolean>('checkForUpdates', true)) {
         return;
     }
+    // Nothing to do in a browser: vscode.dev installs from the Marketplace and
+    // updates on its own, there is no .vsix to sideload, and the download path
+    // below is Node's https and crypto, which a web worker host does not have.
+    if (vscode.env.uiKind === vscode.UIKind.Web) {
+        return;
+    }
     const lastCheckedAt = context.globalState.get<number>(LAST_CHECKED_KEY);
     if (!shouldCheck(lastCheckedAt, now)) {
         return;

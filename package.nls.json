@@ -1,0 +1,20 @@
+{
+    "displayName": "ColumnKit",
+    "description": "One-click buttons for even editor columns and fixed column counts.",
+    "category": "ColumnKit",
+    "configuration.title": "ColumnKit",
+    "command.even.title": "Even Out Columns",
+    "command.pickColumns.title": "Set Column Count...",
+    "command.undoLayout.title": "Undo ColumnKit Change",
+    "command.columns2.title": "2 Columns",
+    "command.columns3.title": "3 Columns",
+    "command.columns4.title": "4 Columns",
+    "command.columns5.title": "5 Columns",
+    "command.columns6.title": "6 Columns",
+    "command.columns8.title": "8 Columns",
+    "config.statusBarPresets": "Extra column-count buttons to show in the status bar beside the Even button. Empty by default: the same presets are one click away in the Even button hover menu. Setting this also brings back the picker button.",
+    "config.statusBarAlignment": "Which side of the status bar the ColumnKit buttons sit on.",
+    "config.showEditorTitleButton": "Also show an Even Out Columns icon in each editor group's title bar. Off by default because narrow columns push it into the overflow menu.",
+    "config.autoCorrect": "Keep every editor group clear of its minimum width. VS Code expands a group on click when its width is exactly the minimum, and there is no setting to disable that. The expand happens before an extension is told the group became active, so every group is raised ahead of time rather than the one you clicked. Turn it off to restore stock behaviour.",
+    "config.checkForUpdates": "Check GitHub once a day for a newer release. VS Code never auto-updates an extension installed from a .vsix, so without this you would not hear about fixes. Turn it off and ColumnKit makes no network requests at all."
+}

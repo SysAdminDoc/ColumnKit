@@ -33,6 +33,9 @@
 - Extension test suite (`npm test`), with a probe that pins down how `vscode.getEditorLayout` denominates group sizes.
 
 ### Changed
+- `Undo Layout Change` is now `Undo ColumnKit Change`. It only ever reversed ColumnKit's own changes, and the old name suggested it would put back a sash you dragged yourself.
+- Every string the extension shows is ready to be translated, and the manifest strings live in `package.nls.json`. Nothing changes in an English editor.
+- Collapsing to a single column used to report "1 columns".
 - The Settings editor asks for a 500px minimum rather than the usual 220, so it was expanding on click even with the guard on. Each column is now measured against the floor its own pane asks for.
 - ColumnKit now adds one status bar button instead of five. Clicking it still evens the columns; hovering it gives you the column-count presets, the picker and undo, each a single click. Set `columnkit.statusBarPresets` to get the numbered buttons back as permanent items.
 

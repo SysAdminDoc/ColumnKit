@@ -1,7 +1,7 @@
 {
   "name": "columnkit",
-  "displayName": "ColumnKit",
-  "description": "One-click buttons for even editor columns and fixed column counts.",
+  "displayName": "%displayName%",
+  "description": "%description%",
   "version": "0.1.0",
   "publisher": "SysAdminDoc",
   "license": "MIT",
@@ -23,51 +23,51 @@
     "commands": [
       {
         "command": "columnkit.even",
-        "title": "Even Out Columns",
-        "category": "ColumnKit",
+        "title": "%command.even.title%",
+        "category": "%category%",
         "icon": "$(split-horizontal)"
       },
       {
         "command": "columnkit.pickColumns",
-        "title": "Set Column Count...",
-        "category": "ColumnKit",
+        "title": "%command.pickColumns.title%",
+        "category": "%category%",
         "icon": "$(layout)"
       },
       {
         "command": "columnkit.undoLayout",
-        "title": "Undo Layout Change",
-        "category": "ColumnKit",
+        "title": "%command.undoLayout.title%",
+        "category": "%category%",
         "icon": "$(discard)"
       },
       {
         "command": "columnkit.columns2",
-        "title": "2 Columns",
-        "category": "ColumnKit"
+        "title": "%command.columns2.title%",
+        "category": "%category%"
       },
       {
         "command": "columnkit.columns3",
-        "title": "3 Columns",
-        "category": "ColumnKit"
+        "title": "%command.columns3.title%",
+        "category": "%category%"
       },
       {
         "command": "columnkit.columns4",
-        "title": "4 Columns",
-        "category": "ColumnKit"
+        "title": "%command.columns4.title%",
+        "category": "%category%"
       },
       {
         "command": "columnkit.columns5",
-        "title": "5 Columns",
-        "category": "ColumnKit"
+        "title": "%command.columns5.title%",
+        "category": "%category%"
       },
       {
         "command": "columnkit.columns6",
-        "title": "6 Columns",
-        "category": "ColumnKit"
+        "title": "%command.columns6.title%",
+        "category": "%category%"
       },
       {
         "command": "columnkit.columns8",
-        "title": "8 Columns",
-        "category": "ColumnKit"
+        "title": "%command.columns8.title%",
+        "category": "%category%"
       }
     ],
     "menus": {
@@ -80,7 +80,7 @@
       ]
     },
     "configuration": {
-      "title": "ColumnKit",
+      "title": "%configuration.title%",
       "properties": {
         "columnkit.statusBarPresets": {
           "type": "array",
@@ -90,7 +90,7 @@
             "maximum": 12
           },
           "default": [],
-          "description": "Extra column-count buttons to show in the status bar beside the Even button. Empty by default: the same presets are one click away in the Even button hover menu. Setting this also brings back the picker button."
+          "description": "%config.statusBarPresets%"
         },
         "columnkit.statusBarAlignment": {
           "type": "string",
@@ -99,22 +99,22 @@
             "right"
           ],
           "default": "left",
-          "description": "Which side of the status bar the ColumnKit buttons sit on."
+          "description": "%config.statusBarAlignment%"
         },
         "columnkit.showEditorTitleButton": {
           "type": "boolean",
           "default": false,
-          "description": "Also show an Even Out Columns icon in each editor group's title bar. Off by default because narrow columns push it into the overflow menu."
+          "description": "%config.showEditorTitleButton%"
         },
         "columnkit.autoCorrect": {
           "type": "boolean",
           "default": true,
-          "description": "Keep every editor group clear of its minimum width. VS Code expands a group on click when its width is exactly the minimum, and there is no setting to disable that. The expand happens before an extension is told the group became active, so every group is raised ahead of time rather than the one you clicked. Turn it off to restore stock behaviour."
+          "description": "%config.autoCorrect%"
         },
         "columnkit.checkForUpdates": {
           "type": "boolean",
           "default": true,
-          "description": "Check GitHub once a day for a newer release. VS Code never auto-updates an extension installed from a .vsix, so without this you would not hear about fixes. Turn it off and ColumnKit makes no network requests at all."
+          "description": "%config.checkForUpdates%"
         }
       }
     }

@@ -27,7 +27,7 @@ One button, in the status bar, so the status bar has to be visible.
 
 Clicking `Even` distributes width across every open column and leaves the column count alone. That is the everyday one, and it can never lose an arrangement.
 
-Hover it and you get the rest: jump straight to 2, 3, 4, 6 or 8 columns, pick any count from 1 to 12, or undo the last layout change. Each is a single click.
+Hover it and you get the rest: jump straight to 2, 3, 4, 6 or 8 columns, pick any count from 1 to 12, or undo the last ColumnKit change. Each is a single click. Undo only reverses changes ColumnKit made, so it won't put back a sash you dragged yourself.
 
 The numbered actions change how many columns exist. Ask for fewer than you have open and the surplus columns' tabs get merged into the last one. Ask for more and you get empty columns. Nothing is closed and no editor is lost, but the arrangement does change, which is what undo is for. Undo brings back the widths and moves the merged tabs back to the columns they came from.
 
@@ -51,7 +51,7 @@ Everything is in the palette under `ColumnKit`, if you'd rather type than click.
 
 - `ColumnKit: Even Out Columns`
 - `ColumnKit: Set Column Count...`
-- `ColumnKit: Undo Layout Change`
+- `ColumnKit: Undo ColumnKit Change`
 - `ColumnKit: 2 Columns`, `3`, `4`, `5`, `6` and `8 Columns`
 
 Counts the palette doesn't list, up to 12, are in the picker.

@@ -7,7 +7,6 @@ import {
     SETTINGS_FLOOR,
     TabPlacement,
     correctFloor,
-    describeColumnChange,
     floorRisk,
     isFlat,
     leaves,
@@ -293,12 +292,15 @@ async function installUpdate(
     // extension never made.
     if (!asset.url.startsWith(ASSET_PREFIX)) {
         log?.warn(`update rejected: ${asset.url} is not a ColumnKit release asset`);
-        notify('ColumnKit: that update did not come from the ColumnKit releases page.', 6000);
+        notify(
+            vscode.l10n.t('ColumnKit: that update did not come from the ColumnKit releases page.'),
+            6000
+        );
         return;
     }
     const bytes = await download(asset.url, MAX_VSIX_BYTES);
     if (!bytes) {
-        notify('ColumnKit: the update could not be downloaded.', 4000);
+        notify(vscode.l10n.t('ColumnKit: the update could not be downloaded.'), 4000);
         return;
     }
     const crypto = await import('node:crypto');
@@ -306,7 +308,9 @@ async function installUpdate(
     if (actual !== asset.sha256) {
         log?.warn(`update rejected: expected ${asset.sha256}, got ${actual}`);
         notify(
-            'ColumnKit: the downloaded update did not match its checksum, so it was not installed.',
+            vscode.l10n.t(
+                'ColumnKit: the downloaded update did not match its checksum, so it was not installed.'
+            ),
             6000
         );
         return;
@@ -366,17 +370,24 @@ async function checkForUpdate(
         }
 
         log?.info(`update available: ${update.version}`);
-        const install = update.asset ? 'Update' : undefined;
+        const update_ = vscode.l10n.t('Update');
+        const notes = vscode.l10n.t('Release notes');
+        const skip = vscode.l10n.t('Skip this version');
+        const install = update.asset ? update_ : undefined;
         const choice = await vscode.window.showInformationMessage(
-            `ColumnKit ${update.version} is available. You have ${current}.`,
-            ...[install, 'Release notes', 'Skip this version'].filter((x): x is string => !!x)
+            vscode.l10n.t(
+                'ColumnKit {0} is available. You have {1}.',
+                update.version,
+                current
+            ),
+            ...[install, notes, skip].filter((x): x is string => !!x)
         );
 
-        if (choice === 'Update') {
+        if (choice === update_) {
             await installUpdate(context, update);
-        } else if (choice === 'Release notes') {
+        } else if (choice === notes) {
             await vscode.env.openExternal(vscode.Uri.parse(update.release.html_url));
-        } else if (choice === 'Skip this version') {
+        } else if (choice === skip) {
             await context.globalState.update(SKIPPED_VERSION_KEY, update.version);
         }
     } catch (error) {
@@ -384,6 +395,66 @@ async function checkForUpdate(
         // unhandled rejection in the host log and the promise never settles.
         log?.debug(`update check failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+}
+
+export interface ColumnChange {
+    /** Column count that was requested. */
+    columns: number;
+    /** Column count before the change. */
+    before: number;
+    /** Whether the result may leave columns on the minimum-width floor. */
+    floorRisk: boolean;
+    /** Set only when the request was capped, to the count originally asked for. */
+    requested?: number;
+}
+
+/** "1 column", "3 columns". */
+function plural(n: number, word: string): string {
+    return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * One message describing the whole outcome.
+ *
+ * Two consecutive setStatusBarMessage calls do not queue: the second replaces
+ * the first. Reporting the merge and the floor risk separately meant the merge
+ * notice was destroyed in exactly the case that carried both.
+ *
+ * Lives here rather than in layout.ts, which is deliberately free of the vscode
+ * module: this is presentation, and it is the one place that needs l10n.
+ */
+export function describeColumnChange(change: ColumnChange): string {
+    const { columns, before, floorRisk, requested } = change;
+
+    if (requested !== undefined && requested !== columns) {
+        return vscode.l10n.t(
+            'ColumnKit: {0} columns will not fit above the minimum width, so you have {1}. Any more would put every column at the minimum width, where a click expands it.',
+            requested,
+            columns
+        );
+    }
+
+    let outcome: string;
+    if (columns < before) {
+        outcome = vscode.l10n.t(
+            '{0}, {1} merged into the last one. Nothing was closed.',
+            plural(columns, 'column'),
+            plural(before - columns, 'column')
+        );
+    } else if (columns > before) {
+        outcome = vscode.l10n.t(
+            '{0}, {1} added.',
+            plural(columns, 'column'),
+            plural(columns - before, 'empty column')
+        );
+    } else {
+        outcome = vscode.l10n.t('{0}, evened.', plural(columns, 'column'));
+    }
+
+    const risk = floorRisk
+        ? ' ' + vscode.l10n.t('Columns may sit at the minimum width and expand on click.')
+        : '';
+    return `ColumnKit: ${outcome}${risk}`;
 }
 
 export type NotifyChannel = 'statusBar' | 'notification';
@@ -490,7 +561,7 @@ async function evenColumns(): Promise<void> {
     try {
         await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
     } catch {
-        notify('ColumnKit: could not even out the columns.', 3000);
+        notify(vscode.l10n.t('ColumnKit: could not even out the columns.'), 3000);
         return;
     } finally {
         floorGuard?.endHold(UNDO_SETTLE_MS);
@@ -627,7 +698,7 @@ async function keepingEmptyGroups<T>(restore: () => Promise<T>): Promise<T> {
 async function undoLayout(): Promise<void> {
     const previous = history.pop();
     if (!previous) {
-        notify('ColumnKit: nothing to undo.', 3000);
+        notify(vscode.l10n.t('ColumnKit: nothing to undo.'), 3000);
         return;
     }
     // The restored geometry is the user's own, and it may legitimately hold a
@@ -642,7 +713,7 @@ async function undoLayout(): Promise<void> {
             // The entry was already off the ring. Put it back rather than losing
             // a step to a write that never landed, and do not claim a restore.
             history.record(previous);
-            notify('ColumnKit: could not restore the layout.', 3000);
+            notify(vscode.l10n.t('ColumnKit: could not restore the layout.'), 3000);
             return;
         }
 
@@ -669,8 +740,11 @@ async function undoLayout(): Promise<void> {
 
         notify(
             stranded === 0
-                ? 'ColumnKit: layout restored.'
-                : `ColumnKit: layout restored, but ${stranded} tab${stranded === 1 ? '' : 's'} could not be moved back.`,
+                ? vscode.l10n.t('ColumnKit: layout restored.')
+                : vscode.l10n.t(
+                    'ColumnKit: layout restored, but {0} could not be moved back.',
+                    plural(stranded, 'tab')
+                ),
             3000
         );
     } finally {
@@ -733,7 +807,7 @@ async function setColumns(columns: number): Promise<void> {
         } catch {
             // Nothing changed, so the entry recorded above would be a phantom step.
             forgetIfRecorded(previous);
-            notify('ColumnKit: could not change the column count.', 3000);
+            notify(vscode.l10n.t('ColumnKit: could not change the column count.'), 3000);
             return;
         }
 
@@ -767,26 +841,29 @@ async function pickColumns(): Promise<void> {
     for (let n = 1; n <= 12; n++) {
         items.push({
             label: `${n}`,
-            description: n === 1 ? 'column' : 'columns',
+            description: n === 1 ? vscode.l10n.t('column') : vscode.l10n.t('columns'),
             detail:
                 n === current
-                    ? 'Current layout. Picking this evens the widths.'
+                    ? vscode.l10n.t('Current layout. Picking this evens the widths.')
                     : n < current
-                        ? `Merges ${current - n} column${current - n === 1 ? '' : 's'} into the last one.`
-                        : `Adds ${n - current} empty column${n - current === 1 ? '' : 's'}.`
+                        ? vscode.l10n.t('Merges {0} into the last one.', plural(current - n, 'column'))
+                        : vscode.l10n.t('Adds {0}.', plural(n - current, 'empty column'))
         });
     }
 
     // Reached from the status bar picker so undo has an affordance without
     // adding another permanent status bar item.
-    const UNDO = '$(discard) Undo last layout change';
+    const UNDO = '$(discard) ' + vscode.l10n.t('Undo the last ColumnKit change');
     if (history.size > 0) {
-        items.unshift({ label: UNDO, description: `${history.size} step${history.size === 1 ? '' : 's'} available` });
+        items.unshift({
+            label: UNDO,
+            description: vscode.l10n.t('{0} available', plural(history.size, 'step'))
+        });
     }
 
     const choice = await vscode.window.showQuickPick(items, {
         title: 'ColumnKit',
-        placeHolder: `Column count (currently ${current})`
+        placeHolder: vscode.l10n.t('Column count (currently {0})', current)
     });
 
     if (!choice) {
@@ -857,10 +934,12 @@ class StatusBar {
      */
     private menu(): vscode.MarkdownString {
         const menu = new vscode.MarkdownString(
-            'Even out every open column, keeping the count as-is.\n\n' +
-            [2, 3, 4, 6, 8].map(n => `[${n} columns](command:columnkit.columns${n})`).join(' · ') +
-            '\n\n[Choose a count...](command:columnkit.pickColumns)' +
-            ' · [Undo layout change](command:columnkit.undoLayout)'
+            vscode.l10n.t('Even out every open column, keeping the count as-is.') + '\n\n' +
+            [2, 3, 4, 6, 8]
+                .map(n => `[${vscode.l10n.t('{0} columns', n)}](command:columnkit.columns${n})`)
+                .join(' · ') +
+            `\n\n[${vscode.l10n.t('Choose a count...')}](command:columnkit.pickColumns)` +
+            ` · [${vscode.l10n.t('Undo ColumnKit change')}](command:columnkit.undoLayout)`
         );
         // Command links are inert without this.
         menu.isTrusted = true;
@@ -888,8 +967,8 @@ class StatusBar {
         // stay reachable through this one's hover menu.
         this.add(alignment, priority--, {
             text: '$(split-horizontal) Even',
-            name: 'ColumnKit: Even Out Columns',
-            label: 'Even out editor columns',
+            name: vscode.l10n.t('ColumnKit: Even Out Columns'),
+            label: vscode.l10n.t('Even out editor columns'),
             tooltip: this.menu(),
             command: 'columnkit.even'
         });
@@ -897,9 +976,9 @@ class StatusBar {
         for (const n of presets) {
             this.add(alignment, priority--, {
                 text: `${n}`,
-                name: `ColumnKit: ${n} Columns`,
-                label: `${n} equal editor ${n === 1 ? 'column' : 'columns'}`,
-                tooltip: `ColumnKit: ${n} equal columns`,
+                name: vscode.l10n.t('ColumnKit: {0} Columns', n),
+                label: vscode.l10n.t('{0} equal editor {1}', n, n === 1 ? vscode.l10n.t('column') : vscode.l10n.t('columns')),
+                tooltip: vscode.l10n.t('ColumnKit: {0} equal columns', n),
                 command: `columnkit.columns${n}`
             });
         }
@@ -909,9 +988,9 @@ class StatusBar {
         if (presets.length > 0) {
             this.add(alignment, priority--, {
                 text: '$(layout)',
-                name: 'ColumnKit: Column Count Picker',
-                label: 'Choose editor column count',
-                tooltip: 'ColumnKit: pick a column count',
+                name: vscode.l10n.t('ColumnKit: Column Count Picker'),
+                label: vscode.l10n.t('Choose editor column count'),
+                tooltip: vscode.l10n.t('ColumnKit: pick a column count'),
                 command: 'columnkit.pickColumns'
             });
         }

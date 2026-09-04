@@ -5,7 +5,6 @@ import {
     SETTINGS_FLOOR,
     LayoutHistory,
     correctFloor,
-    describeColumnChange,
     floorRisk,
     isFlat,
     leaves,
@@ -13,6 +12,7 @@ import {
     measureEditorWidth,
     requiredWidth
 } from '../layout';
+import { describeColumnChange } from '../extension';
 
 suite('LayoutHistory', () => {
     // An entry now carries the geometry plus, for a change that merged groups,
@@ -480,5 +480,22 @@ suite('describeColumnChange', () => {
     test('uses singular wording for a single column', () => {
         assert.match(describeColumnChange({ columns: 4, before: 5, floorRisk: false }), /1 column merged/);
         assert.match(describeColumnChange({ columns: 5, before: 4, floorRisk: false }), /1 empty column added/);
+    });
+
+    test('says "1 column" when the result is a single column', () => {
+        // CK-48. The leading count was hardcoded plural, so collapsing to one
+        // column reported "1 columns".
+        assert.match(describeColumnChange({ columns: 1, before: 1, floorRisk: false }), /1 column, evened/);
+        assert.match(
+            describeColumnChange({ columns: 1, before: 3, floorRisk: false }),
+            /1 column, 2 columns merged/
+        );
+        for (const message of [
+            describeColumnChange({ columns: 1, before: 1, floorRisk: false }),
+            describeColumnChange({ columns: 1, before: 3, floorRisk: false }),
+            describeColumnChange({ columns: 1, before: 2, floorRisk: false, requested: 6 })
+        ]) {
+            assert.doesNotMatch(message, /\b1 columns\b/, `plural for a single column: ${message}`);
+        }
     });
 });

@@ -79,6 +79,34 @@ suite('manifest', () => {
         assert.strictEqual(extension().exports.scheduledAtActivation, true);
     });
 
+    test('every %key% in the manifest resolves through package.nls.json', () => {
+        // CK-23. A missing key does not fail the build: it ships a literal
+        // %key% into the command palette.
+        const root = extension().extensionPath;
+        const raw = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
+        const bundle = JSON.parse(
+            fs.readFileSync(path.join(root, 'package.nls.json'), 'utf8')
+        ) as Record<string, string>;
+        const referenced = [...new Set([...raw.matchAll(/"%([^%"]+)%"/g)].map(m => m[1]))];
+
+        assert.ok(referenced.length > 0, 'the manifest no longer references the bundle at all');
+        assert.deepStrictEqual(
+            referenced.filter(key => !(key in bundle)),
+            [],
+            'manifest keys with no entry in package.nls.json'
+        );
+    });
+
+    test('the bundle is actually applied, not merely present', () => {
+        // packageJSON comes back with NLS already resolved, so a raw %key% here
+        // means the bundle was not loaded.
+        const titles: string[] = manifest().contributes.commands.map(
+            (c: { title: string }) => c.title
+        );
+        assert.deepStrictEqual(titles.filter(t => t.startsWith('%')), []);
+        assert.ok(titles.includes('Even Out Columns'), `got: ${titles.join(', ')}`);
+    });
+
     test('every contributed command is registered at runtime', async () => {
         const contributed: string[] = manifest().contributes.commands.map(
             (c: { command: string }) => c.command

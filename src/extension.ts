@@ -7,8 +7,10 @@ import {
     ColumnFloor,
     SETTINGS_FLOOR,
     TabPlacement,
+    BalanceMode,
     LayoutNode,
     RememberedLayout,
+    balance,
     canRestore,
     correctFloor,
     evenSplit,
@@ -808,6 +810,16 @@ async function evenColumns(context: vscode.ExtensionContext): Promise<void> {
     // A pinned column keeps its width while the rest are evened, which the
     // built-in command cannot do: it distributes every group in the grid.
     const pinned = previous ? pinnedLayoutFor(context, previous) : undefined;
+    // On a grid there are two defensible answers and the built-in only gives
+    // one, so the setting decides. On a flat row they agree, and the built-in
+    // is the better-tested path.
+    const balanced =
+        !pinned && previous && !isFlat(previous.groups)
+            ? balance(
+                previous,
+                config().get<BalanceMode>('balanceMode', 'tree') === 'area' ? 'area' : 'tree'
+            )
+            : undefined;
     floorGuard?.beginHold();
     try {
         if (pinned) {
@@ -815,6 +827,8 @@ async function evenColumns(context: vscode.ExtensionContext): Promise<void> {
                 orientation: 0,
                 groups: pinned.map(size => ({ size }))
             });
+        } else if (balanced) {
+            await vscode.commands.executeCommand('vscode.setEditorLayout', balanced);
         } else {
             await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
         }

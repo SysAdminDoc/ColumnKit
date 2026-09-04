@@ -4,6 +4,7 @@ import {
     DEFAULT_FLOOR,
     SETTINGS_FLOOR,
     LayoutHistory,
+    balance,
     canRestore,
     correctFloor,
     evenSplit,
@@ -468,6 +469,23 @@ suite('weightedSizes', () => {
         assert.strictEqual(weightedSizes(900, [1, -2]), undefined);
         assert.strictEqual(weightedSizes(900, [1, Number.NaN]), undefined);
     });
+
+    test('refuses a total that is not whole pixels, which means raw weights', () => {
+        // A layout that has not been laid out still reports the weights it was
+        // written with. Splitting those produces sizes of zero and a total that
+        // drifts, so there is nothing useful to return.
+        assert.strictEqual(weightedSizes(0.9999999999999999, [1, 1, 1]), undefined);
+        assert.strictEqual(weightedSizes(1.5, [1, 1]), undefined);
+        assert.strictEqual(weightedSizes(0, [1, 1]), undefined);
+        assert.strictEqual(weightedSizes(-900, [1, 1]), undefined);
+    });
+
+    test('refuses a total too small to give every column a pixel', () => {
+        // 0.5 and 0.5 sum to exactly 1, so the integer check alone lets it by.
+        assert.strictEqual(weightedSizes(1, [1, 1]), undefined);
+        assert.strictEqual(weightedSizes(2, [1, 1, 1]), undefined);
+        assert.deepStrictEqual(weightedSizes(3, [1, 1, 1]), [1, 1, 1]);
+    });
 });
 
 suite('withColumnShare', () => {
@@ -592,6 +610,93 @@ suite('evenSplit', () => {
             next.groups[0].groups?.reduce((sum, n) => sum + (n.size ?? 0), 0),
             400
         );
+    });
+});
+
+suite('balance', () => {
+    // CK-27. One full-height column beside a column split into two rows, which
+    // is the smallest layout where the two rules disagree.
+    const grid = () => ({
+        orientation: 0 as const,
+        groups: [
+            { size: 300 },
+            { size: 600, groups: [{ size: 100 }, { size: 500 }] }
+        ]
+    });
+
+    test('tree gives every split an equal share', () => {
+        const next = balance(grid(), 'tree');
+        assert.ok(next);
+        assert.deepStrictEqual(next.groups.map(n => n.size), [450, 450]);
+        assert.deepStrictEqual(next.groups[1].groups?.map(n => n.size), [300, 300]);
+    });
+
+    test('area gives every group the same amount of space', () => {
+        // Three groups, so the split column houses two of them and takes two
+        // thirds of the width.
+        const next = balance(grid(), 'area');
+        assert.ok(next);
+        assert.deepStrictEqual(next.groups.map(n => n.size), [300, 600]);
+        assert.deepStrictEqual(next.groups[1].groups?.map(n => n.size), [300, 300]);
+    });
+
+    test('the two rules really do differ on a grid', () => {
+        assert.notDeepStrictEqual(
+            balance(grid(), 'tree')?.groups.map(n => n.size),
+            balance(grid(), 'area')?.groups.map(n => n.size)
+        );
+    });
+
+    test('they agree on a flat row, which is why this only shows up on a grid', () => {
+        const flat = { orientation: 0 as const, groups: [{ size: 100 }, { size: 500 }, { size: 300 }] };
+        assert.deepStrictEqual(balance(flat, 'tree'), balance(flat, 'area'));
+        assert.deepStrictEqual(balance(flat, 'tree')?.groups.map(n => n.size), [300, 300, 300]);
+    });
+
+    test('preserves the editor area and each branch extent', () => {
+        for (const mode of ['tree', 'area'] as const) {
+            const next = balance(grid(), mode);
+            assert.ok(next);
+            assert.strictEqual(next.groups.reduce((s, n) => s + (n.size ?? 0), 0), 900, mode);
+            assert.strictEqual(
+                next.groups[1].groups?.reduce((s, n) => s + (n.size ?? 0), 0),
+                600,
+                `${mode} moved the branch extent`
+            );
+        }
+    });
+
+    test('leaves the input untouched', () => {
+        const layout = grid();
+        balance(layout, 'area');
+        assert.deepStrictEqual(layout, grid());
+    });
+
+    test('refuses a single column and a layout that has not laid out', () => {
+        assert.strictEqual(balance({ orientation: 0, groups: [{ size: 900 }] }, 'tree'), undefined);
+        assert.strictEqual(
+            balance({ orientation: 0, groups: [{ size: 0.5 }, { size: 0.5 }] }, 'tree'),
+            undefined
+        );
+    });
+
+    test('handles three levels of nesting without losing the shape', () => {
+        const deep = {
+            orientation: 0 as const,
+            groups: [
+                { size: 400 },
+                {
+                    size: 800,
+                    groups: [{ size: 200 }, { size: 400, groups: [{ size: 300 }, { size: 500 }] }]
+                }
+            ]
+        };
+        const next = balance(deep, 'area');
+        assert.ok(next);
+        // Four groups: one on the left, three in the right column.
+        assert.deepStrictEqual(next.groups.map(n => n.size), [300, 900]);
+        assert.strictEqual(next.groups[1].groups?.length, 2);
+        assert.strictEqual(next.groups[1].groups?.[1].groups?.length, 2);
     });
 });
 

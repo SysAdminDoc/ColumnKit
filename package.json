@@ -140,6 +140,15 @@
           "default": false,
           "description": "%config.rememberLayout%"
         },
+        "columnkit.balanceMode": {
+          "type": "string",
+          "enum": [
+            "tree",
+            "area"
+          ],
+          "default": "tree",
+          "description": "%config.balanceMode%"
+        },
         "columnkit.remainderStrategy": {
           "type": "string",
           "enum": [

@@ -47,6 +47,7 @@ If you would rather have the numbers as permanent buttons instead of a hover men
 | `columnkit.showEditorTitleButton` | `false` | Adds an `Even` icon to each editor group's title bar. Off by default, because a narrow column pushes it straight into the overflow menu where it stops being one click. |
 | `columnkit.checkForUpdates` | `true` | Asks GitHub once a day whether a newer release exists. See Updates below. Turn it off and ColumnKit makes no network requests at all. |
 | `columnkit.rememberLayout` | `false` | Keeps this workspace's column widths and puts them back when you reopen it. Saved with the editor width it was measured at, so a layout from a wide monitor won't be restored onto a laptop. Off by default, because VS Code usually restores the grid itself. |
+| `columnkit.balanceMode` | `tree` | What `Even` does on a grid. `tree` equalizes each split, `area` gives every group the same amount of space. Identical on a plain row of columns. |
 | `columnkit.remainderStrategy` | `even` | How the other columns share what's left when you set one column's width. `proportional` keeps their existing ratio instead of equalising them. |
 | `columnkit.watchWhileIdle` | `false` | Re-checks the widths every couple of seconds while the window has focus, which is the only way to catch a column you drag onto the minimum yourself. Off by default because it's a timer rather than a reaction to anything. |
 
@@ -101,7 +102,7 @@ The forks all carry the same bug and the same two layout commands, and they read
 
 `Pin or Unpin This Column's Width` fixes the focused column at the width it has now. `Even` then leaves it alone and shares the space among the others, and a new editor group takes its space from them too. The pin is soft, the way Vim's `winfixwidth` is: when the window genuinely runs out of room the pinned column gives ground rather than making the layout impossible. Pins are per workspace and survive a reload, and at least one column always has to stay unpinned to take up the slack.
 
-On a grid, `Even` still distributes every group in it. `Even Out This Split` is the finer version: it evens only the rows of the column you're in and leaves the column beside it untouched, the way `vertical wincmd =` does in Vim.
+On a grid there are two honest answers to "even these out", and `columnkit.balanceMode` picks one. `tree` gives every split an equal share, so a plain column beside a column of two rows ends up half and half. `area` gives every editor group the same amount of space, so the same layout ends up a third and two thirds. Emacs has shipped both for years. On a plain row of columns they're identical. `Even Out This Split` is the finer version: it evens only the rows of the column you're in and leaves the column beside it untouched, the way `vertical wincmd =` does in Vim.
 
 The numbered counts write a flat row of columns, so asking for one on a grid that has a column split into rows will flatten it. `Even` and the automatic correction both leave a grid alone.
 

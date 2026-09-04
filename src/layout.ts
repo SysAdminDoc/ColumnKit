@@ -92,6 +92,53 @@ export function evenSplit(layout: EditorLayout, leafIndex: number): EditorLayout
     return clone;
 }
 
+/**
+ * The two meanings of "even these out" on a grid.
+ *
+ * `tree` equalizes at every split, so a column beside a column of two rows ends
+ * up half and half. `area` equalizes the space each group gets, so that same
+ * layout ends up a third and two thirds, because the split column is housing
+ * two groups. Emacs ships both, as `balance-windows` and `balance-windows-area`,
+ * and they are the only two answers anyone gives to the question.
+ *
+ * On a flat row of columns they are identical, which is why this only shows up
+ * once a layout has depth.
+ */
+export type BalanceMode = 'tree' | 'area';
+
+/** Rewrites `nodes` in place so each split is shared out by the chosen rule. */
+function rebalance(nodes: LayoutNode[], total: number, byArea: boolean): boolean {
+    const weights = byArea ? nodes.map(node => leaves([node]).length) : nodes.map(() => 1);
+    const shares = weightedSizes(total, weights);
+    if (!shares) {
+        return false;
+    }
+    for (const [i, node] of nodes.entries()) {
+        node.size = shares[i];
+        if (node.groups && node.groups.length > 0) {
+            // The children's sizes run along the perpendicular axis, so their
+            // total is the branch's own extent on that axis and not the width
+            // just assigned. Redistributing within it leaves the branch's
+            // footprint alone.
+            const across = node.groups.reduce((sum, child) => sum + (child.size ?? 0), 0);
+            if (!rebalance(node.groups, across, byArea)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/** A whole layout balanced by one of the two rules, or undefined if it cannot be. */
+export function balance(layout: EditorLayout, mode: BalanceMode): EditorLayout | undefined {
+    const clone = JSON.parse(JSON.stringify(layout)) as EditorLayout;
+    const total = clone.groups.reduce((sum, node) => sum + (node.size ?? 0), 0);
+    if (clone.groups.length < 2 || !rebalance(clone.groups, total, mode === 'area')) {
+        return undefined;
+    }
+    return clone;
+}
+
 /** Whether the leaf at `leafIndex` sits at the top level rather than in a branch. */
 export function isTopLevelLeaf(nodes: LayoutNode[], leafIndex: number): boolean {
     return siblingsOf(nodes, leafIndex) === nodes;
@@ -425,6 +472,13 @@ export function weightedSizes(total: number, weights: number[]): number[] | unde
         .sort((a, b) => b.fraction - a.fraction);
     for (let given = 0; given < short; given++) {
         sizes[byFraction[given % byFraction.length].i]++;
+    }
+    // A column of no width is not a layout. This catches the total being too
+    // small to go round, and the case the integer check above lets through:
+    // raw weights of 0.5 and 0.5 sum to exactly 1, which is an integer, and
+    // splitting 1px two ways leaves one of them on nothing.
+    if (sizes.some(size => size <= 0)) {
+        return undefined;
     }
     return sizes;
 }

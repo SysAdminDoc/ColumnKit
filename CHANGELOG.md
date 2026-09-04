@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-09-04
 
 ### Fixed
 - Every column count is in the command palette now, 1 through 12. Six of them were registered but never listed, and the hover menu that carried the rest needs a pointer, so a keyboard user could only reach them through the picker.

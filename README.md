@@ -1,6 +1,6 @@
 # ColumnKit
 
-![version](https://img.shields.io/badge/version-0.1.0-blue)
+![version](https://img.shields.io/badge/version-0.2.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/platform-VS%20Code%201.77%2B-lightgrey)
 

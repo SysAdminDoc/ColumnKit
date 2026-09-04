@@ -321,6 +321,30 @@ suite('update check in the host', () => {
         );
     });
 
+    test('refuses an asset that is not a ColumnKit release download', async () => {
+        // The prefix is enforced where the decision is built, but this function
+        // is on the exported API and can be reached with a decision this
+        // extension never made.
+        const columnKit = await api();
+        let fetched = false;
+        await columnKit.installUpdate(
+            {
+                version: '9.9.9',
+                release: release(),
+                asset: { url: 'https://evil.example/columnkit.vsix', sha256: 'a'.repeat(64) }
+            },
+            async () => {
+                fetched = true;
+                return Buffer.from('anything');
+            }
+        );
+        assert.strictEqual(fetched, false, 'it downloaded from a host it should have refused');
+        assert.match(
+            columnKit.lastNotification()?.message ?? '',
+            /did not come from the ColumnKit releases page/
+        );
+    });
+
     test('reports a download that could not be fetched', async () => {
         const columnKit = await api();
         const decision = decide('0.1.0', release(), undefined);

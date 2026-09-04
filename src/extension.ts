@@ -14,7 +14,7 @@ import {
     maxColumns,
     measureEditorWidth
 } from './layout';
-import { Release, UpdateDecision, decide, isRelease, shouldCheck } from './update';
+import { ASSET_PREFIX, Release, UpdateDecision, decide, isRelease, shouldCheck } from './update';
 
 const CONFIG_SECTION = 'columnkit';
 
@@ -201,7 +201,17 @@ async function httpsGet(
                         resolve(undefined);
                         return;
                     }
-                    resolve(httpsGet(new URL(location, url).toString(), limit, redirectsLeft - 1));
+                    // Runs in the response callback, not the executor, so a
+                    // malformed Location would throw where nothing can catch it
+                    // and this promise would never settle.
+                    let next: string;
+                    try {
+                        next = new URL(location, url).toString();
+                    } catch {
+                        resolve(undefined);
+                        return;
+                    }
+                    resolve(httpsGet(next, limit, redirectsLeft - 1));
                     return;
                 }
                 if (status !== 200) {
@@ -276,6 +286,14 @@ async function installUpdate(
 ): Promise<void> {
     const asset = update.asset;
     if (!asset) {
+        return;
+    }
+    // Checked again here, not only where the decision was built. This function
+    // is on the exported API, so it can be reached with a decision this
+    // extension never made.
+    if (!asset.url.startsWith(ASSET_PREFIX)) {
+        log?.warn(`update rejected: ${asset.url} is not a ColumnKit release asset`);
+        notify('ColumnKit: that update did not come from the ColumnKit releases page.', 6000);
         return;
     }
     const bytes = await download(asset.url, MAX_VSIX_BYTES);
@@ -412,15 +430,35 @@ function tabKey(tab: vscode.Tab): string {
     return `${uri ? uri.toString() : ''} ${tab.label}`;
 }
 
-/** Where every open tab sits right now, in grid order. */
+/**
+ * Where every open tab sits right now, in grid order.
+ *
+ * Deduplicated by key. The same resource open in two columns collapses to one
+ * editor when the groups merge, so two placements would then compete for one
+ * tab: the first would see it already in place and the second would drag it out
+ * of the column it was correctly in. Two tabs that share a label and have no
+ * resource, a pair of terminals say, are indistinguishable through this API and
+ * are treated the same way. First position recorded wins.
+ */
 function snapshotTabs(): TabPlacement[] {
     const placements: TabPlacement[] = [];
+    const seen = new Set<string>();
     for (const group of vscode.window.tabGroups.all) {
         group.tabs.forEach((tab, index) => {
-            placements.push({ viewColumn: group.viewColumn, index, key: tabKey(tab) });
+            const key = tabKey(tab);
+            if (seen.has(key)) {
+                return;
+            }
+            seen.add(key);
+            placements.push({ viewColumn: group.viewColumn, index, key });
         });
     }
     return placements;
+}
+
+/** The group currently holding the tab with this key, if any. */
+function groupHolding(key: string): vscode.TabGroup | undefined {
+    return vscode.window.tabGroups.all.find(group => group.tabs.some(tab => tabKey(tab) === key));
 }
 
 /** Whether two layouts have the same leaf widths, in the same order. */
@@ -521,9 +559,6 @@ async function activateTab(key: string): Promise<boolean> {
  * Returns how many tabs could not be put back.
  */
 async function restoreTabs(placements: TabPlacement[], columns: number): Promise<number> {
-    const locate = (key: string): vscode.TabGroup | undefined =>
-        vscode.window.tabGroups.all.find(group => group.tabs.some(tab => tabKey(tab) === key));
-
     let stranded = 0;
     // Ascending column then index, so tabs arrive in the order they sat in and
     // a column's contents end up in their original sequence.
@@ -537,7 +572,7 @@ async function restoreTabs(placements: TabPlacement[], columns: number): Promise
             stranded++;
             continue;
         }
-        const group = locate(placement.key);
+        const group = groupHolding(placement.key);
         if (!group) {
             // Closed since the snapshot. Not an error, just nothing to move.
             continue;
@@ -555,8 +590,38 @@ async function restoreTabs(placements: TabPlacement[], columns: number): Promise
             by: 'group',
             value: placement.viewColumn
         });
+        // moveActiveEditor indexes the group list and does nothing at all when
+        // the index is past the end, so the move has to be confirmed rather
+        // than assumed. Reporting a restore that silently did not happen is
+        // worse than reporting a stranded tab.
+        const landed = groupHolding(placement.key);
+        if (!landed || landed.viewColumn !== placement.viewColumn) {
+            stranded++;
+        }
     }
     return stranded;
+}
+
+/**
+ * Runs `restore` with VS Code's close-empty-group behaviour switched off.
+ *
+ * Moving the last editor out of a group deletes that group:
+ * `doCloseActiveEditor` ends with `closeEmptyGroups && removeGroup(this)`, and
+ * that setting defaults to true. A reduction whose merge target had no tabs of
+ * its own therefore collapses the restored grid the moment the merged tab is
+ * moved back, and the user gets fewer columns than they started with. Held off
+ * for the duration and put back exactly as it was found, including removing the
+ * key again when it was never set.
+ */
+async function keepingEmptyGroups<T>(restore: () => Promise<T>): Promise<T> {
+    const editor = () => vscode.workspace.getConfiguration('workbench.editor');
+    const previous = editor().inspect<boolean>('closeEmptyGroups')?.globalValue;
+    await editor().update('closeEmptyGroups', false, vscode.ConfigurationTarget.Global);
+    try {
+        return await restore();
+    } finally {
+        await editor().update('closeEmptyGroups', previous, vscode.ConfigurationTarget.Global);
+    }
 }
 
 async function undoLayout(): Promise<void> {
@@ -582,13 +647,22 @@ async function undoLayout(): Promise<void> {
         }
 
         let stranded = 0;
-        if (previous.tabs) {
+        const tabs = previous.tabs;
+        // Only when something is actually out of place. Otherwise every undo
+        // would write a user setting twice for nothing, which every other
+        // extension in the window hears about.
+        const displaced =
+            tabs?.some(placement => {
+                const group = groupHolding(placement.key);
+                return group !== undefined && group.viewColumn !== placement.viewColumn;
+            }) ?? false;
+        if (tabs && displaced) {
             const columns = leaves(previous.layout.groups).length;
             try {
-                stranded = await restoreTabs(previous.tabs, columns);
+                stranded = await keepingEmptyGroups(() => restoreTabs(tabs, columns));
             } catch {
                 // A failed move must not cost the geometry that already landed.
-                stranded = previous.tabs.length;
+                stranded = tabs.length;
             }
             log?.trace(`undo moved tabs back into ${columns} columns, ${stranded} stranded`);
         }
@@ -630,7 +704,16 @@ async function setColumns(columns: number): Promise<void> {
     // needs their placement remembered. Recording it on every change would also
     // drag a tab the user moved by hand back on the next undo.
     if (previous) {
-        history.record({ layout: previous, tabs: wanted < before ? snapshotTabs() : undefined });
+        // Placement is recorded only for a reduction, which is the only change
+        // that merges, and only when every tab group belongs to the editor part
+        // this write will touch. `tabGroups.all` spans auxiliary windows while
+        // the layout describes the active part alone, so with a floating window
+        // open the two disagree and there is no sound mapping between them.
+        const mappable = vscode.window.tabGroups.all.length === before;
+        history.record({
+            layout: previous,
+            tabs: wanted < before && mappable ? snapshotTabs() : undefined
+        });
     }
 
     const size = 1 / wanted;

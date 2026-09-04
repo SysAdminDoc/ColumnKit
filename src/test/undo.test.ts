@@ -149,6 +149,53 @@ suite('layout undo', () => {
         );
     });
 
+    test('restores a column that was empty when the merge landed on it', async function () {
+        // The nastiest shape: the group the merge lands on has no tabs of its
+        // own. Moving the merged tab back out then leaves it empty, and VS Code
+        // deletes an editor group that loses its last editor, so the grid the
+        // undo had just restored collapsed again and the tab ended up one
+        // column short.
+        this.timeout(30000);
+        const columnKit = await drainHistory();
+
+        await vscode.commands.executeCommand('columnkit.columns3');
+        await settle();
+        const first = await vscode.workspace.openTextDocument({
+            content: 'first column',
+            language: 'plaintext'
+        });
+        await vscode.window.showTextDocument(first, { viewColumn: 1, preview: false });
+        const last = await vscode.workspace.openTextDocument({
+            content: 'last column',
+            language: 'plaintext'
+        });
+        await vscode.window.showTextDocument(last, { viewColumn: 3, preview: false });
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        const key = last.uri.toString();
+        assert.strictEqual(placement().get(key), 3, 'setup should leave the middle column empty');
+        assert.strictEqual(vscode.window.tabGroups.all.length, 3);
+
+        await vscode.commands.executeCommand('columnkit.columns2');
+        await settle();
+        assert.strictEqual(placement().get(key), 2, 'the merge should have landed on the empty column');
+
+        await vscode.commands.executeCommand('columnkit.undoLayout');
+        await settle();
+
+        assert.strictEqual(
+            vscode.window.tabGroups.all.length,
+            3,
+            'the restored grid collapsed when the merge target was emptied again'
+        );
+        assert.strictEqual(placement().get(key), 3, 'the merged tab did not go back');
+        assert.strictEqual(
+            columnKit.lastNotification()?.message,
+            'ColumnKit: layout restored.',
+            'nothing should have been reported as stranded'
+        );
+    });
+
     test('leaves tabs alone when the change added columns rather than merging', async function () {
         // Only a reduction moves tabs, so only a reduction records where they
         // were. Recording on every change would drag a hand-moved tab back.

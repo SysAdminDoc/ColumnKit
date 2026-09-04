@@ -23,7 +23,7 @@
 
 ### Added
 - The floor guard. VS Code expands an editor group the moment you click into it if that group's width is exactly its minimum, and there's no setting anywhere that turns it off. ColumnKit keeps every column clear of that width so the expand never has anything to fire on. `columnkit.autoCorrect` switches it off.
-- Layout undo. `ColumnKit: Undo Layout Change` puts back the geometry from before the last column change and moves any merged tabs back to the columns they came from. The picker offers it too. Automatic floor corrections are left out of the history, so undo always lands on something you did.
+- Layout undo. `ColumnKit: Undo ColumnKit Change` puts back the geometry from before the last column change and moves any merged tabs back to the columns they came from. The picker offers it too. Automatic floor corrections are left out of the history, so undo always lands on something you did.
 - A daily update check, because VS Code never auto-updates an extension installed from a `.vsix`. It offers the release notes, an install or a skip. An install is checked against the checksum GitHub publishes for the file. `columnkit.checkForUpdates` turns the whole thing off, and then ColumnKit makes no network requests at all.
 - `install.cmd` and `SHA256SUMS.txt` are built alongside the `.vsix` and attached to the release. Double-clicking a .vsix on Windows hands it to Visual Studio's installer, which rejects it. The script checks the download against the checksum and installs it into whichever VS Code family editors you have.
 - A `ColumnKit` output channel. Automatic corrections are logged at trace level with the widths before and after, so a misfire leaves a record instead of vanishing. Raise the level with `Developer: Set Log Level`.
@@ -35,8 +35,9 @@
 
 ### Changed
 - `Undo Layout Change` is now `Undo ColumnKit Change`. It only ever reversed ColumnKit's own changes, and the old name suggested it would put back a sash you dragged yourself.
-- Every string the extension shows is ready to be translated, and the manifest strings live in `package.nls.json`. Nothing changes in an English editor.
+- Every string the extension shows is ready to be translated. Manifest strings live in `package.nls.json`, the rest in `l10n/bundle.l10n.json`. Nothing changes in an English editor.
 - Collapsing to a single column used to report "1 columns".
+- The message when a column count gets capped now talks about the minimum width rather than "the floor", which was a term only the README explained.
 - The Settings editor asks for a 500px minimum rather than the usual 220, so it was expanding on click even with the guard on. Each column is now measured against the floor its own pane asks for.
 - ColumnKit now adds one status bar button instead of five. Clicking it still evens the columns; hovering it gives you the column-count presets, the picker and undo, each a single click. Set `columnkit.statusBarPresets` to get the numbered buttons back as permanent items.
 

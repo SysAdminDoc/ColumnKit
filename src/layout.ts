@@ -202,6 +202,90 @@ export interface Correction {
 }
 
 /**
+ * Splits `total` across `weights`, preserving the total exactly.
+ *
+ * `setEditorLayout` normalizes whatever magnitudes it is given, so the weights
+ * could be handed straight to it. They are resolved to pixels here instead
+ * because the caller has to know the resulting widths to decide whether any of
+ * them lands on a floor.
+ *
+ * The rounding remainder goes to the largest fractional parts, so the columns
+ * that lost the most to flooring are the ones that get a pixel back.
+ */
+export function weightedSizes(total: number, weights: number[]): number[] | undefined {
+    if (weights.length === 0 || !weights.every(weight => weight > 0 && Number.isFinite(weight))) {
+        return undefined;
+    }
+    const sum = weights.reduce((a, b) => a + b, 0);
+    const exact = weights.map(weight => (weight / sum) * total);
+    const sizes = exact.map(Math.floor);
+    const short = total - sizes.reduce((a, b) => a + b, 0);
+    const byFraction = exact
+        .map((value, i) => ({ i, fraction: value - Math.floor(value) }))
+        .sort((a, b) => b.fraction - a.fraction);
+    for (let given = 0; given < short; given++) {
+        sizes[byFraction[given % byFraction.length].i]++;
+    }
+    return sizes;
+}
+
+/** How the columns that were not given an explicit share soak up the rest. */
+export type RemainderStrategy = 'even' | 'proportional';
+
+/**
+ * Widths after column `index` is given `percent` of the editor area.
+ *
+ * A count is often not what someone means: "make this one half the screen" is.
+ * The rest is shared either equally or in proportion to what each column
+ * already had, which are both defensible readings of "leave the others alone"
+ * and differ visibly on an uneven layout.
+ *
+ * Refuses rather than producing a layout with a column on its floor, since that
+ * is the state the whole extension exists to avoid.
+ */
+export function withColumnShare(
+    sizes: number[],
+    index: number,
+    percent: number,
+    strategy: RemainderStrategy,
+    floors: number[]
+): number[] | undefined {
+    if (
+        sizes.length < 2 ||
+        index < 0 ||
+        index >= sizes.length ||
+        floors.length !== sizes.length ||
+        !(percent > 0 && percent < 100)
+    ) {
+        return undefined;
+    }
+    const total = sizes.reduce((a, b) => a + b, 0);
+    const share = Math.round((percent / 100) * total);
+    const others = sizes.map((_, i) => i).filter(i => i !== index);
+
+    const weights =
+        strategy === 'even'
+            ? others.map(() => 1)
+            : others.map(i => (sizes[i] > 0 ? sizes[i] : 1));
+    const rest = weightedSizes(total - share, weights);
+    if (!rest) {
+        return undefined;
+    }
+
+    const next = sizes.slice();
+    next[index] = share;
+    others.forEach((column, at) => {
+        next[column] = rest[at];
+    });
+
+    // Strictly above the floor: equality is what arms the expand.
+    if (next.some((size, i) => size <= floors[i])) {
+        return undefined;
+    }
+    return next;
+}
+
+/**
  * The two widths that matter for one column, which are not always the same
  * number.
  *

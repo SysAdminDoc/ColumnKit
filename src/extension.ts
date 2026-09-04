@@ -411,10 +411,19 @@ export interface ColumnChange {
     requested?: number;
 }
 
-/** "1 column", "3 columns". */
-function plural(n: number, word: string): string {
-    return `${n} ${word}${n === 1 ? '' : 's'}`;
+/**
+ * A counted noun, with both forms given to the translator.
+ *
+ * Building "3 " + "column" + "s" in English and dropping the result into a
+ * placeholder leaves every counted sentence half translated, and bakes in a
+ * plural rule most languages do not have.
+ */
+function plural(n: number, one: string, many: string): string {
+    return n === 1 ? vscode.l10n.t(one, n) : vscode.l10n.t(many, n);
 }
+
+const COLUMNS = ['{0} column', '{0} columns'] as const;
+const EMPTY_COLUMNS = ['{0} empty column', '{0} empty columns'] as const;
 
 /**
  * One message describing the whole outcome.
@@ -431,8 +440,8 @@ export function describeColumnChange(change: ColumnChange): string {
 
     if (requested !== undefined && requested !== columns) {
         return vscode.l10n.t(
-            'ColumnKit: {0} columns will not fit above the minimum width, so you have {1}. Any more would put every column at the minimum width, where a click expands it.',
-            requested,
+            'ColumnKit: {0} will not fit above the minimum width, so you have {1}. Any more would put every column at the minimum width, where a click expands it.',
+            plural(requested, ...COLUMNS),
             columns
         );
     }
@@ -441,17 +450,17 @@ export function describeColumnChange(change: ColumnChange): string {
     if (columns < before) {
         outcome = vscode.l10n.t(
             '{0}, {1} merged into the last one. Nothing was closed.',
-            plural(columns, 'column'),
-            plural(before - columns, 'column')
+            plural(columns, ...COLUMNS),
+            plural(before - columns, ...COLUMNS)
         );
     } else if (columns > before) {
         outcome = vscode.l10n.t(
             '{0}, {1} added.',
-            plural(columns, 'column'),
-            plural(columns - before, 'empty column')
+            plural(columns, ...COLUMNS),
+            plural(columns - before, ...EMPTY_COLUMNS)
         );
     } else {
-        outcome = vscode.l10n.t('{0}, evened.', plural(columns, 'column'));
+        outcome = vscode.l10n.t('{0}, evened.', plural(columns, ...COLUMNS));
     }
 
     const risk = floorRisk
@@ -746,7 +755,7 @@ async function undoLayout(): Promise<void> {
                 ? vscode.l10n.t('ColumnKit: layout restored.')
                 : vscode.l10n.t(
                     'ColumnKit: layout restored, but {0} could not be moved back.',
-                    plural(stranded, 'tab')
+                    plural(stranded, '{0} tab', '{0} tabs')
                 ),
             3000
         );
@@ -849,8 +858,8 @@ async function pickColumns(): Promise<void> {
                 n === current
                     ? vscode.l10n.t('Current layout. Picking this evens the widths.')
                     : n < current
-                        ? vscode.l10n.t('Merges {0} into the last one.', plural(current - n, 'column'))
-                        : vscode.l10n.t('Adds {0}.', plural(n - current, 'empty column'))
+                        ? vscode.l10n.t('Merges {0} into the last one.', plural(current - n, ...COLUMNS))
+                        : vscode.l10n.t('Adds {0}.', plural(n - current, ...EMPTY_COLUMNS))
         });
     }
 
@@ -860,7 +869,10 @@ async function pickColumns(): Promise<void> {
     if (history.size > 0) {
         items.unshift({
             label: UNDO,
-            description: vscode.l10n.t('{0} available', plural(history.size, 'step'))
+            description: vscode.l10n.t(
+                '{0} available',
+                plural(history.size, '{0} step', '{0} steps')
+            )
         });
     }
 
@@ -942,7 +954,7 @@ class StatusBar {
                 .map(n => `[${vscode.l10n.t('{0} columns', n)}](command:columnkit.columns${n})`)
                 .join(' · ') +
             `\n\n[${vscode.l10n.t('Choose a count...')}](command:columnkit.pickColumns)` +
-            ` · [${vscode.l10n.t('Undo ColumnKit change')}](command:columnkit.undoLayout)`
+            ` · [${vscode.l10n.t('Undo the last ColumnKit change')}](command:columnkit.undoLayout)`
         );
         // Command links are inert without this.
         menu.isTrusted = true;

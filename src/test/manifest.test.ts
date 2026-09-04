@@ -97,6 +97,37 @@ suite('manifest', () => {
         );
     });
 
+    test('declares where translations live, or l10n.t can never load one', () => {
+        // Without this the extension host returns early from
+        // initializeLocalizedMessages and every l10n.t call is a permanent
+        // pass-through, so the strings look wrapped and are not translatable.
+        assert.strictEqual(manifest().l10n, './l10n');
+    });
+
+    test('every localized string has an entry in the source bundle', () => {
+        // The bundle is what a translator starts from, so a string added
+        // without regenerating it is a string nobody can translate.
+        const root = extension().extensionPath;
+        const compiled = fs.readFileSync(path.join(root, 'out', 'extension.js'), 'utf8');
+        const bundle = JSON.parse(
+            fs.readFileSync(path.join(root, 'l10n', 'bundle.l10n.json'), 'utf8')
+        ) as Record<string, string>;
+
+        const used = [
+            ...new Set(
+                [...compiled.matchAll(/vscode\.l10n\.t\(\s*'((?:[^'\\]|\\.)*)'/g)].map(m =>
+                    m[1].replace(/\\'/g, "'").replace(/\\\\/g, '\\')
+                )
+            )
+        ];
+        assert.ok(used.length > 20, `only found ${used.length} localized strings`);
+        assert.deepStrictEqual(
+            used.filter(literal => !(literal in bundle)),
+            [],
+            'strings missing from l10n/bundle.l10n.json'
+        );
+    });
+
     test('the bundle is actually applied, not merely present', () => {
         // packageJSON comes back with NLS already resolved, so a raw %key% here
         // means the bundle was not loaded.

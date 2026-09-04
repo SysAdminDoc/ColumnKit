@@ -10,7 +10,8 @@ import {
     isFlat,
     leaves,
     maxColumns,
-    measureEditorWidth
+    measureEditorWidth,
+    requiredWidth
 } from '../layout';
 
 suite('LayoutHistory', () => {
@@ -248,88 +249,127 @@ suite('measureEditorWidth', () => {
     });
 });
 
-suite('floorRisk', () => {
+suite('requiredWidth', () => {
     const floor = 220;
 
-    test('warns when the columns would land on the floor', () => {
-        // 852 / 4 = 213, under the floor.
-        assert.strictEqual(floorRisk(852, 4, floor), true);
+    test('counts every column, each one pixel clear of the floor', () => {
+        assert.strictEqual(requiredWidth(3, [], floor), 3 * 221);
     });
 
-    test('warns when they land exactly on it, which is what arms the expand', () => {
-        assert.strictEqual(floorRisk(880, 4, floor), true);
+    test('houses the widest panes that are actually open', () => {
+        // A Settings pane needs 500, so three columns with one open needs
+        // 501 + 221 + 221, not 3 x 221.
+        assert.strictEqual(requiredWidth(3, [SETTINGS_FLOOR, DEFAULT_FLOOR], floor), 501 + 221 + 221);
     });
 
-    test('stays quiet when the columns fit', () => {
-        // 852 / 3 = 284.
-        assert.strictEqual(floorRisk(852, 3, floor), false);
+    test('pads with the ordinary floor for columns that end up empty', () => {
+        assert.strictEqual(requiredWidth(4, [SETTINGS_FLOOR], floor), 501 + 221 * 3);
     });
 
-    test('stays quiet for 8 columns on the wide display', () => {
-        // 3440x1440 at 125% is 2752 CSS px, so 8 columns is 344 each. The old
-        // 1920px assumption warned here, wrongly.
-        assert.strictEqual(floorRisk(2752, 8, floor), false);
-    });
-
-    test('warns for 6 columns in a narrow window, where the old guess stayed quiet', () => {
-        // 1280 / 6 = 213. Under the 1920 assumption this was silent.
-        assert.strictEqual(floorRisk(1280, 6, floor), true);
-    });
-
-    test('warns when an integer split puts most columns on the floor', () => {
-        // 2641 / 12 averages 220.08, fractionally clear of the floor, but the
-        // real split is eleven columns at 220 and one at 221. Judging the mean
-        // let this through.
-        assert.strictEqual(floorRisk(2641, 12, floor), true);
-    });
-
-    test('still passes a split whose narrowest column clears the floor', () => {
-        // 2652 / 12 = 221 exactly, so every column is clear.
-        assert.strictEqual(floorRisk(2652, 12, floor), false);
-    });
-
-    test('reports no risk when the width is unknown', () => {
-        assert.strictEqual(floorRisk(undefined, 12, floor), false);
-    });
-
-    test('refuses a nonsense column count rather than dividing by zero', () => {
-        assert.strictEqual(floorRisk(852, 0, floor), false);
+    test('ignores panes beyond the requested column count', () => {
+        // Asking for one column cannot be constrained by four panes' floors.
+        assert.strictEqual(requiredWidth(1, [220, 220, 220, 220], floor), 221);
     });
 });
 
 suite('maxColumns', () => {
     const floor = 220;
+    const ordinary: number[] = [];
 
     test('stops one short of an exact multiple, which floors every column', () => {
         // 880 / 4 = 220 exactly, and equality is what arms the expand.
-        assert.strictEqual(maxColumns(880, floor), 3);
+        assert.strictEqual(maxColumns(880, ordinary, floor), 3);
     });
 
     test('allows the largest count that stays clear of the floor', () => {
-        // 900 / 4 = 225.
-        assert.strictEqual(maxColumns(900, floor), 4);
-        assert.strictEqual(maxColumns(2752, floor), 12);
+        assert.strictEqual(maxColumns(900, ordinary, floor), 4);
+        assert.strictEqual(maxColumns(2752, ordinary, floor), 12);
         // 2641 across 12 looks fine on the average and is not: eleven of those
         // columns land on exactly 220.
-        assert.strictEqual(maxColumns(2641, floor), 11);
+        assert.strictEqual(maxColumns(2641, ordinary, floor), 11);
+    });
+
+    test('gives up a column when a wide pane is open', () => {
+        // 2752 holds 12 ordinary columns, but a Settings pane eats 280 more.
+        assert.strictEqual(maxColumns(2752, [SETTINGS_FLOOR], floor), 11);
     });
 
     test('never reports fewer than one column', () => {
-        assert.strictEqual(maxColumns(100, floor), 1);
+        assert.strictEqual(maxColumns(100, ordinary, floor), 1);
     });
 
     test('reports nothing when the width is unknown', () => {
-        assert.strictEqual(maxColumns(undefined, floor), undefined);
+        assert.strictEqual(maxColumns(undefined, ordinary, floor), undefined);
     });
 
     test('agrees with floorRisk at every count', () => {
-        // The cap and the warning must not disagree, or the extension would warn
-        // about a layout it just chose, or cap without warning.
-        for (const width of [640, 852, 880, 900, 1280, 2641, 2752]) {
-            const fits = maxColumns(width, floor)!;
-            assert.strictEqual(floorRisk(width, fits, floor), false, `${width} at ${fits}`);
-            assert.strictEqual(floorRisk(width, fits + 1, floor), true, `${width} at ${fits + 1}`);
+        // The cap and the warning must not disagree, or the extension warns
+        // about a layout it just chose, or caps without warning.
+        for (const width of [640, 852, 880, 900, 1280, 2000, 2641, 2752]) {
+            for (const floors of [[], [SETTINGS_FLOOR], [SETTINGS_FLOOR, SETTINGS_FLOOR]]) {
+                const fits = maxColumns(width, floors, floor)!;
+                assert.strictEqual(
+                    floorRisk(width, fits, floors, floor),
+                    false,
+                    `${width} with ${JSON.stringify(floors)} at ${fits}`
+                );
+                assert.strictEqual(
+                    floorRisk(width, fits + 1, floors, floor),
+                    true,
+                    `${width} with ${JSON.stringify(floors)} at ${fits + 1}`
+                );
+            }
         }
+    });
+});
+
+suite('floorRisk', () => {
+    const floor = 220;
+    const ordinary: number[] = [];
+
+    test('warns when the columns would land on the floor', () => {
+        assert.strictEqual(floorRisk(852, 4, ordinary, floor), true);
+    });
+
+    test('warns when they land exactly on it, which is what arms the expand', () => {
+        assert.strictEqual(floorRisk(880, 4, ordinary, floor), true);
+    });
+
+    test('stays quiet when the columns fit', () => {
+        assert.strictEqual(floorRisk(852, 3, ordinary, floor), false);
+    });
+
+    test('stays quiet for 8 columns on the wide display', () => {
+        // 3440x1440 at 125% is 2752 CSS px. The old 1920px assumption warned here.
+        assert.strictEqual(floorRisk(2752, 8, ordinary, floor), false);
+    });
+
+    test('warns for 6 columns in a narrow window, where the old guess stayed quiet', () => {
+        assert.strictEqual(floorRisk(1280, 6, ordinary, floor), true);
+    });
+
+    test('warns when an integer split puts most columns on the floor', () => {
+        // 2641 / 12 averages 220.08, and eleven of those columns are 220.
+        assert.strictEqual(floorRisk(2641, 12, ordinary, floor), true);
+    });
+
+    test('still passes a split whose narrowest column clears the floor', () => {
+        assert.strictEqual(floorRisk(2652, 12, ordinary, floor), false);
+    });
+
+    test('warns when a wide pane will not fit even though the average looks fine', () => {
+        // 2000 / 9 = 222, clear of 220, but the open Settings pane needs 500 and
+        // the eight others need 221 each: 2269 in all.
+        assert.strictEqual(floorRisk(2000, 9, ordinary, floor), false);
+        assert.strictEqual(floorRisk(2000, 9, [SETTINGS_FLOOR], floor), true);
+    });
+
+    test('reports no risk when the width is unknown', () => {
+        assert.strictEqual(floorRisk(undefined, 12, ordinary, floor), false);
+    });
+
+    test('refuses a nonsense column count rather than dividing by zero', () => {
+        assert.strictEqual(floorRisk(852, 0, ordinary, floor), false);
     });
 });
 

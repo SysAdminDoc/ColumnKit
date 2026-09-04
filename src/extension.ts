@@ -12,6 +12,7 @@ import {
     maxColumns,
     measureEditorWidth
 } from './layout';
+import { Release, decide, shouldCheck } from './update';
 
 const CONFIG_SECTION = 'columnkit';
 
@@ -55,11 +56,10 @@ async function readLayout(): Promise<EditorLayout | undefined> {
  * rather than silently handing the user the behaviour they are trying to avoid.
  */
 function assessFloorRisk(previous: EditorLayout | undefined, columns: number): boolean {
-    // The warning is about ordinary editors. A wider pane like Settings raises
-    // the bar further, but it will not be in every column after a split.
     return floorRisk(
         previous && measureEditorWidth(previous, DEFAULT_FLOOR),
         columns,
+        currentFloors(),
         DEFAULT_FLOOR
     );
 }
@@ -68,12 +68,21 @@ function assessFloorRisk(previous: EditorLayout | undefined, columns: number): b
  * The minimum width the pane in this column asks for.
  *
  * VS Code compares a group against its own active pane's `minimumWidth`, not a
- * global constant, so a Settings tab arms the expand at 500 where a chat panel
- * arms it at 220. The Settings editor has no `TabInput` class of its own, which
- * leaves its label as the only signal an extension gets.
+ * global constant: the Settings editor asks for 500 where a chat panel asks for
+ * 220. There is no API that reports it, and the panes that override it share
+ * one observable trait: no `TabInput` class, so `tab.input` is undefined.
+ * Settings, Keyboard Shortcuts, the Extension editor and Welcome are all in that
+ * set.
+ *
+ * Matching on the label was worse than useless. It is localized, so every
+ * non-English UI fell through to 220, and believing 220 of a pane that really
+ * wants 500 makes it look like a DONOR with 280px to spare. Taking that space
+ * gets clamped straight back to its 500 minimum, which is the exact value that
+ * arms the expand. Assuming the widest known floor for anything unrecognised
+ * errs toward giving a pane too much room, which is harmless.
  */
 function floorForTab(tab: vscode.Tab | undefined): number {
-    if (tab && tab.input === undefined && tab.label === 'Settings') {
+    if (tab && tab.input === undefined) {
         return SETTINGS_FLOOR;
     }
     return DEFAULT_FLOOR;
@@ -82,16 +91,28 @@ function floorForTab(tab: vscode.Tab | undefined): number {
 /**
  * A floor per layout leaf, in grid order.
  *
- * Leaves are indexed the way ViewColumn is, so groups are matched on
- * `viewColumn` rather than on their position in `tabGroups.all`, which is
- * creation order and disagrees as soon as anything is split to the left.
+ * `getEditorLayout` reports the ACTIVE editor part, while `tabGroups.all` spans
+ * every part with `viewColumn` numbered across all of them. With a floating
+ * window focused, leaf i of that window's grid would be matched against a group
+ * in the main window, and the correction would resize a window whose columns
+ * were never at risk. When the counts disagree there is no sound mapping, so
+ * assume the ordinary floor rather than guess.
  */
 function floorsForColumns(count: number): number[] {
+    const groups = vscode.window.tabGroups.all;
+    if (groups.length !== count) {
+        return Array.from({ length: count }, () => DEFAULT_FLOOR);
+    }
     const byColumn = new Map<number, vscode.TabGroup>();
-    for (const group of vscode.window.tabGroups.all) {
+    for (const group of groups) {
         byColumn.set(group.viewColumn, group);
     }
     return Array.from({ length: count }, (_, i) => floorForTab(byColumn.get(i + 1)?.activeTab));
+}
+
+/** Floors for the groups currently open, used to size a request before writing. */
+function currentFloors(): number[] {
+    return vscode.window.tabGroups.all.map(group => floorForTab(group.activeTab));
 }
 
 /** User-initiated layout changes only. Floor corrections never land here. */
@@ -107,6 +128,114 @@ let floorGuard: FloorGuard | undefined;
  * already has.
  */
 let log: vscode.LogOutputChannel | undefined;
+
+/** Where the update check looks. Only ever read, never written to. */
+const RELEASES_API = 'https://api.github.com/repos/SysAdminDoc/ColumnKit/releases/latest';
+
+const LAST_CHECKED_KEY = 'update.lastCheckedAt';
+const SKIPPED_VERSION_KEY = 'update.skippedVersion';
+
+/** Requests actually issued. Read by the tests to prove silence when disabled. */
+let updateRequests = 0;
+
+/**
+ * Fetches the latest release, or undefined for any failure at all.
+ *
+ * An update check is a convenience, so nothing it does may surface an error or
+ * delay anything the user asked for.
+ */
+async function fetchLatestRelease(): Promise<Release | undefined> {
+    updateRequests++;
+    const https = await import('node:https');
+    return new Promise<Release | undefined>(resolve => {
+        const request = https.get(
+            RELEASES_API,
+            {
+                headers: {
+                    // GitHub rejects requests without one.
+                    'User-Agent': 'ColumnKit-update-check',
+                    Accept: 'application/vnd.github+json'
+                },
+                timeout: 10000
+            },
+            response => {
+                if (response.statusCode !== 200) {
+                    log?.debug(`update check: HTTP ${response.statusCode}`);
+                    response.resume();
+                    resolve(undefined);
+                    return;
+                }
+                let body = '';
+                response.setEncoding('utf8');
+                response.on('data', chunk => {
+                    body += chunk;
+                    // A malformed or hostile response should not be able to grow
+                    // without bound in the extension host.
+                    if (body.length > 1_000_000) {
+                        request.destroy();
+                        resolve(undefined);
+                    }
+                });
+                response.on('end', () => {
+                    try {
+                        resolve(JSON.parse(body) as Release);
+                    } catch {
+                        resolve(undefined);
+                    }
+                });
+            }
+        );
+        request.on('timeout', () => request.destroy());
+        request.on('error', error => {
+            log?.debug(`update check failed: ${error.message}`);
+            resolve(undefined);
+        });
+    });
+}
+
+/**
+ * Tells the user when a newer release exists.
+ *
+ * Buttons, unusually for this extension, because the alternative is installing
+ * something behind their back. The prompt is an offer rather than a
+ * confirmation of an action they already took.
+ */
+async function checkForUpdate(context: vscode.ExtensionContext, now = Date.now()): Promise<void> {
+    if (!config().get<boolean>('checkForUpdates', true)) {
+        return;
+    }
+    const lastCheckedAt = context.globalState.get<number>(LAST_CHECKED_KEY);
+    if (!shouldCheck(lastCheckedAt, now)) {
+        return;
+    }
+    await context.globalState.update(LAST_CHECKED_KEY, now);
+
+    const release = await fetchLatestRelease();
+    const current = context.extension.packageJSON.version as string;
+    const update = decide(current, release, context.globalState.get<string>(SKIPPED_VERSION_KEY));
+    if (!update) {
+        log?.debug(`update check: ${current} is current`);
+        return;
+    }
+
+    log?.info(`update available: ${update.version}`);
+    const install = update.asset ? 'Update' : undefined;
+    const choice = await vscode.window.showInformationMessage(
+        `ColumnKit ${update.version} is available. You have ${current}.`,
+        ...[install, 'Release notes', 'Skip this version'].filter((x): x is string => !!x)
+    );
+
+    if (choice === 'Update' && update.asset) {
+        await vscode.commands.executeCommand(
+            'workbench.extensions.installExtension',
+            vscode.Uri.parse(update.asset.url)
+        );
+    } else if (choice === 'Release notes') {
+        await vscode.env.openExternal(vscode.Uri.parse(update.release.html_url));
+    } else if (choice === 'Skip this version') {
+        await context.globalState.update(SKIPPED_VERSION_KEY, update.version);
+    }
+}
 
 export type NotifyChannel = 'statusBar' | 'notification';
 
@@ -144,13 +273,26 @@ async function remember(): Promise<EditorLayout | undefined> {
     return layout;
 }
 
+/**
+ * Undoes a `remember()` whose write then failed.
+ *
+ * Only when that call actually recorded something. A blind pop would throw away
+ * an older, legitimate step whenever the read failed and the write failed with
+ * it, which are correlated: both go through the same command path.
+ */
+function forgetIfRecorded(recorded: EditorLayout | undefined): void {
+    if (recorded) {
+        history.pop();
+    }
+}
+
 async function evenColumns(): Promise<void> {
-    await remember();
+    const recorded = await remember();
     floorGuard?.suspendFor(UNDO_SETTLE_MS);
     try {
         await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
     } catch {
-        history.pop();
+        forgetIfRecorded(recorded);
         notify('ColumnKit: could not even out the columns.', 3000);
         return;
     }
@@ -195,7 +337,11 @@ async function setColumns(columns: number): Promise<void> {
     // correctFloor cannot rescue that: with nothing above the floor there is no
     // donor to take space from. The preset buttons could create exactly the
     // state this extension exists to prevent, so cap the request instead.
-    const fits = maxColumns(previous && measureEditorWidth(previous, DEFAULT_FLOOR), DEFAULT_FLOOR);
+    const fits = maxColumns(
+        previous && measureEditorWidth(previous, DEFAULT_FLOOR),
+        currentFloors(),
+        DEFAULT_FLOOR
+    );
     const capped = fits !== undefined && columns > fits;
     const wanted = capped ? fits : columns;
 
@@ -213,7 +359,7 @@ async function setColumns(columns: number): Promise<void> {
         await vscode.commands.executeCommand('vscode.setEditorLayout', layout);
     } catch {
         // Nothing changed, so the entry recorded above would be a phantom step.
-        history.pop();
+        forgetIfRecorded(previous);
         notify('ColumnKit: could not change the column count.', 3000);
         return;
     }
@@ -237,7 +383,10 @@ async function setColumns(columns: number): Promise<void> {
 }
 
 async function pickColumns(): Promise<void> {
-    const current = currentColumnCount();
+    // From the layout, not tabGroups.all: the picker describes what a write
+    // would do, and a write only ever touches the active editor part.
+    const layout = await readLayout();
+    const current = layout ? leaves(layout.groups).length : currentColumnCount();
     const items: vscode.QuickPickItem[] = [];
 
     for (let n = 1; n <= 12; n++) {
@@ -504,7 +653,14 @@ class FloorGuard {
             // window still cancels an already-scheduled correction. Inside the
             // try because getConfiguration throws once the host starts tearing
             // down, and this runs from a timer with nobody to catch it.
-            if (this.suspended || !config().get<boolean>('autoCorrect', true)) {
+            if (!config().get<boolean>('autoCorrect', true)) {
+                return false;
+            }
+            if (this.suspended) {
+                // The deadline moved after this run was scheduled, because every
+                // command re-suspends once its write lands. Returning here would
+                // discard the only notification of the change, so re-arm instead.
+                this.schedule();
                 return false;
             }
             const layout = await readLayout();
@@ -515,6 +671,13 @@ class FloorGuard {
             // A nested grid mixes widths and heights in one size list, and a flat
             // write would collapse it. Leaf count always equals group count, so
             // only the shape can tell us; bail rather than guess.
+            // Orientation 1 stacks rows, so the leaf sizes are heights and the
+            // trigger for them is minimumHeight (70), not the width floor. isFlat
+            // is true for a flat vertical stack, so it alone is not enough:
+            // correcting those against 220 silently undoes the user's sash drag.
+            if (layout.orientation !== 0) {
+                return false;
+            }
             if (!isFlat(layout.groups) || layout.groups.length < 2) {
                 return false;
             }
@@ -569,6 +732,10 @@ export interface ColumnKitApi {
     lastNotification(): { message: string; channel: NotifyChannel } | undefined;
     /** How long activate() took, in milliseconds. Reported in the log. */
     activationMs: number;
+    /** Update requests actually issued, so a test can prove none were. */
+    updateRequests(): number;
+    /** Runs the update check now, bypassing nothing else. */
+    checkForUpdate(now?: number): Promise<void>;
     /** Extension subscription count. Exposed so the tests can watch for leaks. */
     subscriptionCount(): number;
 }
@@ -617,6 +784,9 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
 
     // There is no API to enumerate status bar items or observe the guard from
     // outside, so the tests reach them through the activation result.
+    // Fire and forget: nothing the user asked for waits on the network.
+    void checkForUpdate(context);
+
     const activationMs = Date.now() - started;
     log.info(`ColumnKit activated in ${activationMs}ms`);
 
@@ -627,6 +797,8 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
         log,
         activationMs,
         lastNotification: () => lastNotification,
+        updateRequests: () => updateRequests,
+        checkForUpdate: (now?: number) => checkForUpdate(context, now),
         subscriptionCount: () => context.subscriptions.length
     };
 }

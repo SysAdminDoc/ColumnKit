@@ -80,10 +80,11 @@ suite('vscode.getEditorLayout', () => {
         // The most columns that stay STRICTLY above the floor. An exact multiple
         // lands every column on it, and equality is what arms the expand, so
         // Math.floor would name a count that is itself risky.
-        const fits = Math.ceil(width / floor) - 1;
+        const fits = Math.floor(width / (floor + 1));
         assert.ok(fits >= 1, `editor area ${width} cannot hold even one column`);
-        assert.strictEqual(floorRisk(width, fits, floor), false, `${fits} columns should fit`);
-        assert.strictEqual(floorRisk(width, fits + 1, floor), true, `${fits + 1} columns should not`);
+        const ordinary: number[] = [];
+        assert.strictEqual(floorRisk(width, fits, ordinary, floor), false, `${fits} columns should fit`);
+        assert.strictEqual(floorRisk(width, fits + 1, ordinary, floor), true, `${fits + 1} columns should not`);
     });
 
     test('write accepts relative weights, so a read result can be fed straight back', async () => {

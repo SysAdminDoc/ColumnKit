@@ -110,6 +110,11 @@
           "type": "boolean",
           "default": true,
           "description": "Keep the active editor group clear of its minimum width. VS Code expands a group on click when its width is exactly the minimum, and there is no setting to disable that; this raises the group as it becomes active so the expand never triggers. Turn it off to restore stock behaviour."
+        },
+        "columnkit.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check GitHub once a day for a newer release. VS Code never auto-updates an extension installed from a .vsix, so without this you would not hear about fixes. Turn it off and ColumnKit makes no network requests at all."
         }
       }
     }

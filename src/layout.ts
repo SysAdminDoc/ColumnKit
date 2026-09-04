@@ -78,27 +78,46 @@ export function measureEditorWidth(layout: EditorLayout, floor: number): number 
 }
 
 /**
- * The most equal columns `editorWidth` can hold with every one of them clear of
- * the floor, or undefined when the width is unknown.
+ * The narrowest editor area in which `columns` can all sit clear of their
+ * floors.
  *
- * An exact multiple of the floor is one column too many: it lands every column
- * on the floor, which is the value that arms the expand.
+ * Panes do not share one minimum. Splitting into N columns has to house every
+ * pane that is open now, each above its own floor, plus `defaultFloor` for any
+ * column that ends up empty. The widest floors are the binding constraint, so
+ * they are the ones counted. Each floor gets +1 because clearing the floor means
+ * strictly above it: equality is what arms the expand.
  */
-export function maxColumns(editorWidth: number | undefined, floor: number): number | undefined {
-    if (editorWidth === undefined) {
-        return undefined;
+export function requiredWidth(columns: number, floors: number[], defaultFloor: number): number {
+    const widest = [...floors].sort((a, b) => b - a).slice(0, columns);
+    while (widest.length < columns) {
+        widest.push(defaultFloor);
     }
-    // Every column has to reach floor + 1 whole pixels, so the count is bounded
-    // by width / (floor + 1). Deriving it from width / floor instead is a
-    // continuous approximation that disagrees with the integer split: 2641px
-    // across 12 averages 220.08, which looks clear, while the real distribution
-    // is eleven columns at 220 and one at 221.
-    return Math.max(1, Math.floor(editorWidth / (floor + 1)));
+    return widest.reduce((total, floor) => total + floor + 1, 0);
 }
 
 /**
- * Whether splitting `editorWidth` into `columns` leaves them on or under the
- * floor, which is the width that arms VS Code's expand-on-click.
+ * The most columns `editorWidth` can hold with every one clear of its floor, or
+ * undefined when the width is unknown.
+ */
+export function maxColumns(
+    editorWidth: number | undefined,
+    floors: number[],
+    defaultFloor: number
+): number | undefined {
+    if (editorWidth === undefined) {
+        return undefined;
+    }
+    let fits = 1;
+    // Bounded by the width itself, since every column costs at least one pixel.
+    while (fits < 64 && requiredWidth(fits + 1, floors, defaultFloor) <= editorWidth) {
+        fits++;
+    }
+    return fits;
+}
+
+/**
+ * Whether splitting `editorWidth` into `columns` leaves any of them on or under
+ * its floor, which is the width that arms VS Code's expand-on-click.
  *
  * An unknown width reports no risk. Warning on a number we do not have is how
  * the old 1920px assumption both over- and under-warned.
@@ -106,16 +125,13 @@ export function maxColumns(editorWidth: number | undefined, floor: number): numb
 export function floorRisk(
     editorWidth: number | undefined,
     columns: number,
-    floor: number
+    floors: number[],
+    defaultFloor: number
 ): boolean {
     if (editorWidth === undefined || columns < 1) {
         return false;
     }
-    // An equal split is distributed in whole pixels, so the mean can sit
-    // fractionally above the floor while almost every column lands exactly on
-    // it: 2641 across 12 averages 220.08, and eleven of those columns are 220.
-    // Judge the narrowest column, not the average.
-    return Math.floor(editorWidth / columns) <= floor;
+    return editorWidth < requiredWidth(columns, floors, defaultFloor);
 }
 
 export interface ColumnChange {

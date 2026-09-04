@@ -161,7 +161,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package --out dist/ && node scripts/checksums.js",
+    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.mkdirSync('dist')\"",
+    "package": "npm run clean && vsce package --out dist/ && node scripts/checksums.js",
     "test": "vscode-test"
   },
   "devDependencies": {

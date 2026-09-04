@@ -43,7 +43,11 @@ async function parkOnFloor(): Promise<number[]> {
         orientation: 0,
         groups: [{ size: wide }, { size: FLOOR }, { size: FLOOR }]
     });
-    return settle();
+    const sizes = await settle();
+    // See the twin in floorGuard.test.ts: cancel the correction this write
+    // schedules, or it lands between the setup and the assertion.
+    (await api()).floorGuard.resume();
+    return sizes;
 }
 
 async function api(): Promise<ColumnKitApi> {
@@ -255,9 +259,39 @@ suite('layout undo', () => {
         );
     });
 
-    test('records the layout before an Even, so Even is undoable too', async () => {
+    test('records the layout before an Even, and skips one that changes nothing', async function () {
+        // CK-43 changed this deliberately: Even now records only when the widths
+        // actually moved. The old test ran Even on an already-even layout and
+        // asserted an entry, which is the step that undid to identical widths
+        // while announcing a restore. So the setup makes the layout uneven.
+        this.timeout(30000);
         const columnKit = await drainHistory();
+
+        const width = (await settle()).reduce((a, b) => a + b, 0);
+        assert.ok(width - 500 >= FLOOR, `editor area ${width} is too narrow for this setup`);
+        await vscode.commands.executeCommand('vscode.setEditorLayout', {
+            orientation: 0,
+            groups: [{ size: width - 500 }, { size: 250 }, { size: 250 }]
+        });
+        const uneven = await settle();
+        columnKit.floorGuard.resume();
+        await drainHistory();
+
         await vscode.commands.executeCommand('columnkit.even');
-        assert.strictEqual(columnKit.history.size, 1, 'Even should have recorded one entry');
+        await settle();
+        assert.strictEqual(
+            columnKit.history.size,
+            1,
+            'Even should have recorded the uneven layout it replaced'
+        );
+        assert.notDeepStrictEqual(await settle(), uneven, 'Even did not actually change anything');
+
+        await vscode.commands.executeCommand('columnkit.even');
+        await settle();
+        assert.strictEqual(
+            columnKit.history.size,
+            1,
+            'a second Even moved nothing and must not push a step that undoes to the same widths'
+        );
     });
 });

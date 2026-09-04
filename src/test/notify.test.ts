@@ -65,6 +65,21 @@ suite('notify', () => {
         assert.strictEqual(last.channel, 'notification');
     });
 
+    test('reports the outcome of Even, which used to say nothing at all', async function () {
+        // CK-43. Even is the primary button and was the only action with no
+        // confirmation in either channel.
+        this.timeout(30000);
+        await setAccessibilitySupport('off');
+        const columnKit = await api();
+
+        await vscode.commands.executeCommand('columnkit.columns3');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        await vscode.commands.executeCommand('columnkit.even');
+        await new Promise(resolve => setTimeout(resolve, 400));
+
+        assert.match(columnKit.lastNotification()?.message ?? '', /3 columns, evened/);
+    });
+
     test('reports nothing-to-undo rather than staying silent', async () => {
         await setAccessibilitySupport('off');
         const columnKit = await api();

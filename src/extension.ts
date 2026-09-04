@@ -423,12 +423,14 @@ function snapshotTabs(): TabPlacement[] {
     return placements;
 }
 
-async function remember(tabs?: TabPlacement[]): Promise<EditorLayout | undefined> {
-    const layout = await readLayout();
-    if (layout) {
-        history.record({ layout, tabs });
+/** Whether two layouts have the same leaf widths, in the same order. */
+function sameSizes(a: EditorLayout | undefined, b: EditorLayout | undefined): boolean {
+    if (!a || !b) {
+        return false;
     }
-    return layout;
+    const left = leaves(a.groups).map(node => node.size ?? 0);
+    const right = leaves(b.groups).map(node => node.size ?? 0);
+    return left.length === right.length && left.every((size, i) => size === right[i]);
 }
 
 /**
@@ -445,17 +447,41 @@ function forgetIfRecorded(recorded: EditorLayout | undefined): void {
 }
 
 async function evenColumns(): Promise<void> {
-    const recorded = await remember();
+    const previous = await readLayout();
     floorGuard?.beginHold();
     try {
         await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
     } catch {
-        forgetIfRecorded(recorded);
         notify('ColumnKit: could not even out the columns.', 3000);
         return;
     } finally {
         floorGuard?.endHold(UNDO_SETTLE_MS);
     }
+
+    const applied = await readLayout();
+    const columns = applied ? leaves(applied.groups).length : currentColumnCount();
+
+    // Recorded after the fact, and only when something moved. Even on an
+    // already-even layout would otherwise push a step that undoes to the same
+    // widths while announcing a restore.
+    if (previous && !sameSizes(previous, applied)) {
+        history.record({ layout: previous });
+    }
+
+    // evenEditorWidths raises no tab or group event at all, so without this
+    // nothing ever asks the guard to look at what it just produced. Evening
+    // more columns than fit puts every one of them on the floor.
+    floorGuard?.schedule();
+
+    // Even was the one action that said nothing, which made the primary button
+    // the only one with no confirmation, and it never warned about the floor.
+    notify(
+        describeColumnChange({
+            columns,
+            before: columns,
+            floorRisk: assessFloorRisk(applied, columns)
+        })
+    );
 }
 
 /** Focuses the group at 1-based grid position `column`. */
@@ -880,10 +906,21 @@ class FloorGuard {
         this.suspendedUntil = Date.now() + ms;
     }
 
-    /** Ends a suspension early. The window is global, so tests must clear it. */
+    /**
+     * Ends any suspension and cancels a pass that has not run yet.
+     *
+     * Both the window and the timer outlive whatever set them, so a test that
+     * wants a known starting state has to clear both. Without the cancel, a
+     * correction scheduled by the previous write lands at an unpredictable
+     * moment and the next assertion is reading a layout something else moved.
+     */
     resume(): void {
         this.holds = 0;
         this.suspendedUntil = 0;
+        if (this.timer) {
+            clearTimeout(this.timer);
+            this.timer = undefined;
+        }
     }
 
     private get suspended(): boolean {
@@ -1024,6 +1061,12 @@ export interface ColumnKitApi {
     lastNotification(): { message: string; channel: NotifyChannel } | undefined;
     /** How long activate() took, in milliseconds. Reported in the log. */
     activationMs: number;
+    /**
+     * Whether activate() asked the guard to look at the restored layout. The
+     * host cannot be re-activated inside a run, so this is the only way to
+     * assert the wiring rather than the behaviour.
+     */
+    scheduledAtActivation: boolean;
     /** Update requests actually issued, so a test can prove none were. */
     updateRequests(): number;
     /** Runs the update check now. The fetch is injectable so no test hits GitHub. */
@@ -1062,7 +1105,12 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
     floorGuard = guard;
     context.subscriptions.push(
         { dispose: () => guard.dispose() },
-        vscode.window.tabGroups.onDidChangeTabGroups(() => guard.schedule())
+        vscode.window.tabGroups.onDidChangeTabGroups(() => guard.schedule()),
+        // Tabs too, not just groups. The floor belongs to the pane a group is
+        // showing, and opening one changes that without touching the group set:
+        // opening Settings in a 300px column has VS Code clamp it to exactly
+        // 500, the arming width, while firing onDidChangeTabs alone.
+        vscode.window.tabGroups.onDidChangeTabs(() => guard.schedule())
     );
 
     context.subscriptions.push(
@@ -1075,6 +1123,13 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
             }
         })
     );
+
+    // The grid is restored, and the active group set, before the extension host
+    // exists, so no event ever describes the layout we start with. A window
+    // reloaded with a column on its floor would stay armed until something else
+    // happened to fire one. One pass over the restored layout closes that.
+    guard.schedule();
+    const scheduledAtActivation = true;
 
     // There is no API to enumerate status bar items or observe the guard from
     // outside, so the tests reach them through the activation result.
@@ -1090,6 +1145,7 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
         statusBar,
         log,
         activationMs,
+        scheduledAtActivation,
         lastNotification: () => lastNotification,
         updateRequests: () => updateRequests,
         checkForUpdate: (now?: number, fetch?: FetchRelease) => checkForUpdate(context, now, fetch),

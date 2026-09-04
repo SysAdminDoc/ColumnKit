@@ -34,7 +34,12 @@ async function parkOnFloor(): Promise<number[]> {
         orientation: 0,
         groups: [{ size: wide }, { size: FLOOR }, { size: FLOOR }]
     });
-    return settle();
+    const sizes = await settle();
+    // The write can change the group count, which schedules a correction that
+    // would then land in the middle of whatever the test does next. Cancel it,
+    // so every test here starts from a floored layout and an idle guard.
+    (await api()).floorGuard.resume();
+    return sizes;
 }
 
 /** Indexes of every group sitting exactly on the floor. */
@@ -225,23 +230,55 @@ suite('FloorGuard', () => {
         // Positive control for the test above. Without it, a guard that had
         // simply stopped working would look identical.
         this.timeout(30000);
-        await narrowSecondColumn();
         const columnKit = await api();
+        const cfg = vscode.workspace.getConfiguration('columnkit');
 
-        await vscode.commands.executeCommand('workbench.action.openSettings');
-        await new Promise(resolve => setTimeout(resolve, 400));
-        const opened = await settle();
-        assert.strictEqual(
-            opened[1],
-            SETTINGS_FLOOR,
-            `Settings should have been clamped to its own minimum, got ${JSON.stringify(opened)}`
-        );
+        // The guard now wakes on a tab change too, so with it armed it corrects
+        // the clamp before this can observe it. Off for the setup, on for the
+        // assertion.
+        await cfg.update('autoCorrect', false, vscode.ConfigurationTarget.Global);
+        let opened: number[];
+        try {
+            await narrowSecondColumn();
+            await vscode.commands.executeCommand('workbench.action.openSettings');
+            await new Promise(resolve => setTimeout(resolve, 400));
+            opened = await settle();
+            assert.strictEqual(
+                opened[1],
+                SETTINGS_FLOOR,
+                `Settings should have been clamped to its own minimum, got ${JSON.stringify(opened)}`
+            );
+        } finally {
+            await cfg.update('autoCorrect', undefined, vscode.ConfigurationTarget.Global);
+        }
 
         columnKit.floorGuard.resume();
         assert.strictEqual(
             await columnKit.floorGuard.run(),
             true,
             'a Settings pane on exactly 500 is armed and must be raised'
+        );
+        assert.strictEqual((await settle())[1], SETTINGS_FLOOR + CORRECTION_MARGIN);
+    });
+
+    test('wakes on a tab change, not just a group change', async function () {
+        // CK-47. Opening Settings in a narrow column fires onDidChangeTabs and
+        // nothing else, while VS Code clamps the column to exactly 500, which is
+        // the arming width. Listening to group changes alone left it armed.
+        this.timeout(30000);
+        await narrowSecondColumn();
+        const columnKit = await api();
+        columnKit.floorGuard.resume();
+        const before = columnKit.floorGuard.corrections;
+
+        await vscode.commands.executeCommand('workbench.action.openSettings');
+        // Long enough for the debounce plus the write, with nothing else
+        // touching the group set in between.
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        assert.ok(
+            columnKit.floorGuard.corrections > before,
+            'a tab-only change left the column armed'
         );
         assert.strictEqual((await settle())[1], SETTINGS_FLOOR + CORRECTION_MARGIN);
     });

@@ -70,6 +70,15 @@ suite('manifest', () => {
         console.log(`COLUMNKIT_PROBE activationMs=${columnKit.activationMs}`);
     });
 
+    test('asks the guard to look at the layout it was restored into', async () => {
+        // CK-44. VS Code restores the grid and sets the active group before the
+        // extension host exists, so no event ever describes the layout we start
+        // with. A window reloaded with a column on its floor stayed armed until
+        // something unrelated happened. The host cannot be re-activated inside a
+        // run, so this asserts the wiring rather than the behaviour.
+        assert.strictEqual(extension().exports.scheduledAtActivation, true);
+    });
+
     test('every contributed command is registered at runtime', async () => {
         const contributed: string[] = manifest().contributes.commands.map(
             (c: { command: string }) => c.command

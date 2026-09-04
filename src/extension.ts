@@ -20,6 +20,9 @@ const CONFIG_SECTION = 'columnkit';
 /** Coalesces the burst of activation events VS Code fires when focus moves. */
 const AUTO_CORRECT_DEBOUNCE_MS = 120;
 
+/** How often the opt-in idle watch looks, when it is on at all. */
+const POLL_INTERVAL_MS = 2000;
+
 /**
  * How long the floor guard stands down after an undo.
  *
@@ -1030,12 +1033,40 @@ class StatusBar {
  */
 class FloorGuard {
     private timer: NodeJS.Timeout | undefined;
+    private poll: NodeJS.Timeout | undefined;
     private correcting = false;
     private pending = false;
     private disposed = false;
 
     /** Corrections applied since activation. Read by the tests. */
     corrections = 0;
+
+    /**
+     * Starts or stops the idle watch.
+     *
+     * Some geometry changes raise no event an extension can observe at all.
+     * Measured on 1.136.1: a same-count `setEditorLayout`, evenEditorWidths and
+     * toggling the side bar each fired zero tab and zero group events, and a
+     * sash drag has never had one. A column dragged onto its minimum stays
+     * armed until something unrelated happens. Polling is the only signal left,
+     * so it is opt-in, runs only while the window has focus, and each tick is
+     * the same read the event path already does.
+     */
+    setPolling(on: boolean, intervalMs = POLL_INTERVAL_MS): void {
+        if (this.poll) {
+            clearInterval(this.poll);
+            this.poll = undefined;
+        }
+        if (!on || this.disposed) {
+            return;
+        }
+        this.poll = setInterval(() => void this.run(), intervalMs);
+    }
+
+    /** Whether the idle watch is running. Read by the tests. */
+    get polling(): boolean {
+        return this.poll !== undefined;
+    }
 
     /** Wall-clock deadline before which no correction runs. */
     private suspendedUntil = 0;
@@ -1211,6 +1242,7 @@ class FloorGuard {
             clearTimeout(this.timer);
             this.timer = undefined;
         }
+        this.setPolling(false);
     }
 }
 
@@ -1275,13 +1307,27 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
         vscode.window.tabGroups.onDidChangeTabs(() => guard.schedule())
     );
 
+    // Only while the window has focus: a background window's columns are not
+    // being dragged, and a timer in every open window is a cost nobody asked
+    // for. Off unless the user turns it on.
+    const updatePolling = () => {
+        guard.setPolling(
+            config().get<boolean>('watchWhileIdle', false) && vscode.window.state.focused
+        );
+    };
+    updatePolling();
+
     context.subscriptions.push(
+        vscode.window.onDidChangeWindowState(() => updatePolling()),
         vscode.workspace.onDidChangeConfiguration(event => {
             if (
                 event.affectsConfiguration(`${CONFIG_SECTION}.statusBarPresets`) ||
                 event.affectsConfiguration(`${CONFIG_SECTION}.statusBarAlignment`)
             ) {
                 statusBar.rebuild();
+            }
+            if (event.affectsConfiguration(`${CONFIG_SECTION}.watchWhileIdle`)) {
+                updatePolling();
             }
         })
     );

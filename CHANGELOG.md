@@ -29,6 +29,7 @@
 - A `ColumnKit` output channel. Automatic corrections are logged at trace level with the widths before and after, so a misfire leaves a record instead of vanishing. Raise the level with `Developer: Set Log Level`.
 - An icon, so the extension is recognisable in the Extensions view.
 - `extensionKind: ["ui"]`, so a Remote SSH, WSL or Codespaces window stops installing and running this on the remote host when it only ever touches local window layout. Virtual workspaces are declared supported for the same reason.
+- `columnkit.watchWhileIdle`, off by default. Dragging a sash raises no event an extension can see, so a column you park on the minimum width yourself goes unnoticed until something else happens. With this on, ColumnKit re-checks every couple of seconds while the window has focus. It's a timer, which is why it isn't the default.
 - Support for untrusted workspaces. ColumnKit reads no workspace content, so being disabled in Restricted Mode was a pure loss.
 - Extension test suite (`npm test`), with a probe that pins down how `vscode.getEditorLayout` denominates group sizes.
 

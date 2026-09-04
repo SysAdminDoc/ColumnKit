@@ -44,6 +44,7 @@ If you would rather have the numbers as permanent buttons instead of a hover men
 | `columnkit.statusBarAlignment` | `left` | Which end of the status bar the buttons sit on. |
 | `columnkit.showEditorTitleButton` | `false` | Adds an `Even` icon to each editor group's title bar. Off by default, because a narrow column pushes it straight into the overflow menu where it stops being one click. |
 | `columnkit.checkForUpdates` | `true` | Asks GitHub once a day whether a newer release exists. See Updates below. Turn it off and ColumnKit makes no network requests at all. |
+| `columnkit.watchWhileIdle` | `false` | Re-checks the widths every couple of seconds while the window has focus, which is the only way to catch a column you drag onto the minimum yourself. Off by default because it's a timer rather than a reaction to anything. |
 
 ## Commands
 
@@ -92,7 +93,7 @@ The forks all carry the same bug and the same two layout commands, and they read
 
 The floor a column has to clear isn't always 220. VS Code compares a group against whatever its own editor pane asks for. Settings wants 500 and is handled. A side-by-side editor wants roughly double the normal minimum, and the extension API gives no way to tell one apart from an ordinary tab, so that case is still missed. Chat panels, terminals, notebooks and diffs all sit at 220.
 
-Dragging a sash raises no event an extension can see, so a column you drag onto the floor yourself stays armed until the next time tabs or groups change. Same for toggling the side bar, which resizes every column silently.
+Dragging a sash raises no event an extension can see, so a column you drag onto the floor yourself stays armed until the next time tabs or groups change. Toggling the side bar is just as silent, and it resizes every column. Turn on `columnkit.watchWhileIdle` if you hit this often. It re-checks on a timer while the window has focus, which is the only signal available.
 
 ## License
 

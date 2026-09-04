@@ -283,6 +283,79 @@ suite('FloorGuard', () => {
         assert.strictEqual((await settle())[1], SETTINGS_FLOOR + CORRECTION_MARGIN);
     });
 
+    test('does not watch on a timer unless asked to', async () => {
+        // CK-30. Polling is the only signal for a sash drag, and it is the one
+        // thing in here that costs something when nothing is happening.
+        const columnKit = await api();
+        assert.strictEqual(columnKit.floorGuard.polling, false);
+    });
+
+    test('catches a column that reaches the floor with no event at all', async function () {
+        // A same-count setEditorLayout fires neither a tab nor a group event,
+        // measured on 1.136.1, which is the same silence a sash drag produces.
+        // So this parks a column on the floor in a way the event path cannot
+        // see, and only the idle watch can rescue it.
+        this.timeout(30000);
+        const columnKit = await api();
+        const cfg = vscode.workspace.getConfiguration('columnkit');
+
+        // Three groups first, so the write below does not change the count.
+        await vscode.commands.executeCommand('vscode.setEditorLayout', {
+            orientation: 0,
+            groups: [{ size: 1 }, { size: 1 }, { size: 1 }]
+        });
+        const settled = await settle();
+        const width = settled.reduce((a, b) => a + b, 0);
+        columnKit.floorGuard.resume();
+
+        await cfg.update('watchWhileIdle', true, vscode.ConfigurationTarget.Global);
+        try {
+            await new Promise(resolve => setTimeout(resolve, 200));
+            assert.strictEqual(columnKit.floorGuard.polling, true, 'the watch did not start');
+
+            const before = columnKit.floorGuard.corrections;
+            await vscode.commands.executeCommand('vscode.setEditorLayout', {
+                orientation: 0,
+                groups: [{ size: width - FLOOR * 2 }, { size: FLOOR }, { size: FLOOR }]
+            });
+            const floored = await settle();
+            assert.ok(
+                flooredIndexes(floored).length >= 2,
+                `setup did not reach the floor: ${JSON.stringify(floored)}`
+            );
+
+            // Nothing else is touched from here: no command, no tab, no group.
+            for (let waited = 0; waited < 8000; waited += 250) {
+                if (columnKit.floorGuard.corrections > before) {
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 250));
+            }
+            assert.ok(
+                columnKit.floorGuard.corrections > before,
+                'the idle watch never noticed a column sitting on the floor'
+            );
+            for (const size of await settle()) {
+                assert.ok(size > FLOOR, `group left at ${size}`);
+            }
+        } finally {
+            await cfg.update('watchWhileIdle', undefined, vscode.ConfigurationTarget.Global);
+            await new Promise(resolve => setTimeout(resolve, 200));
+        }
+    });
+
+    test('stops watching when the setting goes back off', async function () {
+        this.timeout(30000);
+        const columnKit = await api();
+        const cfg = vscode.workspace.getConfiguration('columnkit');
+        await cfg.update('watchWhileIdle', true, vscode.ConfigurationTarget.Global);
+        await new Promise(resolve => setTimeout(resolve, 200));
+        assert.strictEqual(columnKit.floorGuard.polling, true);
+        await cfg.update('watchWhileIdle', undefined, vscode.ConfigurationTarget.Global);
+        await new Promise(resolve => setTimeout(resolve, 200));
+        assert.strictEqual(columnKit.floorGuard.polling, false, 'the timer outlived the setting');
+    });
+
     test('respects the autoCorrect setting', async () => {
         const cfg = vscode.workspace.getConfiguration('columnkit');
         await cfg.update('autoCorrect', false, vscode.ConfigurationTarget.Global);

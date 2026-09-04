@@ -95,6 +95,8 @@ The forks all carry the same bug and the same two layout commands, and they read
 
 ## Known limits
 
+The numbered counts write a flat row of columns, so asking for one on a grid that has a column split into rows will flatten it. `Even` and the automatic correction both leave a grid alone.
+
 The floor a column has to clear isn't always 220. VS Code compares a group against whatever its own editor pane asks for. Settings wants 500 and is handled. A side-by-side editor wants roughly double the normal minimum, and the extension API gives no way to tell one apart from an ordinary tab, so that case is still missed. Chat panels, terminals, notebooks and diffs all sit at 220.
 
 Dragging a sash raises no event an extension can see, so a column you drag onto the floor yourself stays armed until the next time tabs or groups change. Toggling the side bar is just as silent, and it resizes every column. Turn on `columnkit.watchWhileIdle` if you hit this often. It re-checks on a timer while the window has focus, which is the only signal available.

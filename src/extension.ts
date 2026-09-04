@@ -6,9 +6,11 @@ import {
     ColumnFloor,
     SETTINGS_FLOOR,
     TabPlacement,
+    LayoutNode,
     correctFloor,
     floorRisk,
     isFlat,
+    leafSpans,
     leaves,
     maxColumns,
     measureEditorWidth,
@@ -92,9 +94,12 @@ function assessFloorRisk(previous: EditorLayout | undefined, columns: number): b
  * want 500 gets clamped straight back to exactly 500, which is the value that
  * arms the expand, so the correction would create the bug it exists to prevent.
  */
-function floorForTab(tab: vscode.Tab | undefined, size: number): ColumnFloor {
+function floorForTab(tab: vscode.Tab | undefined, size: number | undefined): ColumnFloor {
     if (tab && tab.input === undefined) {
         return {
+            // Undefined where the size is not a width, which is every group
+            // inside a stacked branch. Nothing can be concluded from a height,
+            // so the arming width falls back to the ordinary one.
             floor: size === SETTINGS_FLOOR ? SETTINGS_FLOOR : DEFAULT_FLOOR,
             donorFloor: SETTINGS_FLOOR
         };
@@ -113,15 +118,44 @@ function floorForTab(tab: vscode.Tab | undefined, size: number): ColumnFloor {
  * assume the ordinary floor rather than guess.
  */
 function floorsForColumns(sizes: number[]): ColumnFloor[] {
+    return floorsForNodes(sizes.map(size => ({ size })));
+}
+
+/**
+ * A floor pair per top-level node, which is per column even on a 2D grid.
+ *
+ * A column holding a stack of rows takes the widest floor of anything in that
+ * stack: the column has to be wide enough for all of them. Groups inside a
+ * stack are matched to tabs by leaf order, because `viewColumn` numbers the
+ * grid in exactly that order.
+ */
+function floorsForNodes(nodes: LayoutNode[]): ColumnFloor[] {
+    const ordinary = () => ({ floor: DEFAULT_FLOOR, donorFloor: DEFAULT_FLOOR });
+    const spans = leafSpans(nodes);
+    const total = spans.reduce((a, b) => a + b, 0);
     const groups = vscode.window.tabGroups.all;
-    if (groups.length !== sizes.length) {
-        return sizes.map(() => ({ floor: DEFAULT_FLOOR, donorFloor: DEFAULT_FLOOR }));
+    if (groups.length !== total) {
+        return nodes.map(ordinary);
     }
     const byColumn = new Map<number, vscode.TabGroup>();
     for (const group of groups) {
         byColumn.set(group.viewColumn, group);
     }
-    return sizes.map((size, i) => floorForTab(byColumn.get(i + 1)?.activeTab, size));
+
+    let leaf = 0;
+    return nodes.map((node, i) => {
+        const combined = ordinary();
+        for (let under = 0; under < spans[i]; under++) {
+            // Only a top-level leaf's own size is a width; anything inside a
+            // branch is a height and says nothing about the arming width.
+            const own = spans[i] === 1 ? node.size : undefined;
+            const floor = floorForTab(byColumn.get(leaf + 1)?.activeTab, own);
+            combined.floor = Math.max(combined.floor, floor.floor);
+            combined.donorFloor = Math.max(combined.donorFloor, floor.donorFloor);
+            leaf++;
+        }
+        return combined;
+    });
 }
 
 /**
@@ -1338,22 +1372,23 @@ class FloorGuard {
                 return false;
             }
 
-            // A nested grid mixes widths and heights in one size list, and a flat
-            // write would collapse it. Leaf count always equals group count, so
-            // only the shape can tell us; bail rather than guess.
-            // Orientation 1 stacks rows, so the leaf sizes are heights and the
-            // trigger for them is minimumHeight (70), not the width floor. isFlat
-            // is true for a flat vertical stack, so it alone is not enough:
-            // correcting those against 220 silently undoes the user's sash drag.
+            // Orientation 1 stacks rows, so the top-level sizes are heights and
+            // the trigger for them is minimumHeight (70), not the width floor.
+            // Correcting those against 220 would silently undo a sash drag.
             if (layout.orientation !== 0) {
                 return false;
             }
-            if (!isFlat(layout.groups) || layout.groups.length < 2) {
+            if (layout.groups.length < 2) {
                 return false;
             }
 
-            const sizes = layout.groups.map(n => n.size ?? 0);
-            const floors = floorsForColumns(sizes);
+            // Top-level nodes only. With orientation 0 each one is a column and
+            // its size is a width, whether it holds a single group or a stack of
+            // rows, so a 2D grid is corrected without being flattened. The
+            // children are carried through the write untouched.
+            const nodes = layout.groups;
+            const sizes = nodes.map(n => n.size ?? 0);
+            const floors = floorsForNodes(nodes);
 
             // A group created moments ago reports the raw weight it was written
             // with until the grid lays it out, so a read straight after a write
@@ -1370,7 +1405,8 @@ class FloorGuard {
 
             await vscode.commands.executeCommand('vscode.setEditorLayout', {
                 orientation: layout.orientation,
-                groups: correction.sizes.map(size => ({ size }))
+                // Spread, so a branch keeps its children and the grid survives.
+                groups: nodes.map((node, i) => ({ ...node, size: correction.sizes[i] }))
             });
             this.corrections++;
             log?.trace(

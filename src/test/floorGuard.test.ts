@@ -15,6 +15,25 @@ async function readSizes(): Promise<number[]> {
  * the minimum makes VS Code clamp it to precisely `minimumWidth`, which is the
  * strict-equality value doRestoreGroup expands on.
  */
+/**
+ * Runs a setup step with the guard held off, then leaves it armed and idle.
+ *
+ * Writing a floored layout schedules a correction, and it lands about 120ms
+ * later, which is inside the window a setup needs to read the result back. Any
+ * test that then asserts on the floored state is racing it. The hold is the
+ * same mechanism the commands use for exactly this reason.
+ */
+async function quietly<T>(setup: () => Promise<T>): Promise<T> {
+    const guard = (await api()).floorGuard;
+    guard.beginHold();
+    try {
+        return await setup();
+    } finally {
+        guard.endHold(0);
+        guard.resume();
+    }
+}
+
 async function parkOnFloor(): Promise<number[]> {
     // Asks for the floor exactly, rather than asking for less and relying on
     // VS Code to clamp upward.
@@ -24,22 +43,19 @@ async function parkOnFloor(): Promise<number[]> {
     // request of [540, 170, 170] against an 880px area was honoured verbatim,
     // leaving nothing on the floor at all. Requesting FLOOR needs no clamp and
     // holds at any window width.
-    const width = (await settle()).reduce((a, b) => a + b, 0);
-    const wide = width - FLOOR * 2;
-    assert.ok(
-        wide >= FLOOR,
-        `editor area ${width} is too narrow to hold three groups above the floor`
-    );
-    await vscode.commands.executeCommand('vscode.setEditorLayout', {
-        orientation: 0,
-        groups: [{ size: wide }, { size: FLOOR }, { size: FLOOR }]
+    return quietly(async () => {
+        const width = (await settle()).reduce((a, b) => a + b, 0);
+        const wide = width - FLOOR * 2;
+        assert.ok(
+            wide >= FLOOR,
+            `editor area ${width} is too narrow to hold three groups above the floor`
+        );
+        await vscode.commands.executeCommand('vscode.setEditorLayout', {
+            orientation: 0,
+            groups: [{ size: wide }, { size: FLOOR }, { size: FLOOR }]
+        });
+        return settle();
     });
-    const sizes = await settle();
-    // The write can change the group count, which schedules a correction that
-    // would then land in the middle of whatever the test does next. Cancel it,
-    // so every test here starts from a floored layout and an idle guard.
-    (await api()).floorGuard.resume();
-    return sizes;
 }
 
 /** Indexes of every group sitting exactly on the floor. */
@@ -78,10 +94,17 @@ suite('FloorGuard', () => {
     });
 
     // Settings and Keyboard Shortcuts stay open otherwise, and the next test's
-    // floors would be read from whichever of them is still active.
+    // floors would be read from whichever of them is still active. The layout
+    // is reset too: a test that leaves a stack of rows behind makes the next
+    // one's `settle()` read heights and compute a nonsense width from them.
     teardown(async () => {
         await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await vscode.commands.executeCommand('vscode.setEditorLayout', {
+            orientation: 0,
+            groups: [{ size: 1 }]
+        });
+        await new Promise(resolve => setTimeout(resolve, 150));
+        (await api()).floorGuard.resume();
     });
 
     test('a layout really can hold groups sitting exactly on the floor', async () => {
@@ -160,27 +183,80 @@ suite('FloorGuard', () => {
         assert.strictEqual(await columnKit.floorGuard.run(), false);
     });
 
-    test('leaves a nested grid alone rather than flattening it', async () => {
-        // Sizes under a perpendicular branch are heights, not widths. Correcting
-        // them against a width floor and writing back flat would destroy the grid.
-        await vscode.commands.executeCommand('vscode.setEditorLayout', {
-            orientation: 0,
-            groups: [{ size: 0.01 }, { groups: [{ size: 1 }, { size: 1 }] }]
-        });
-        const before = await vscode.commands.executeCommand<EditorLayout>('vscode.getEditorLayout');
+    test('corrects a floored column of a 2D grid without flattening it', async function () {
+        // CK-21 changed this deliberately. The guard used to refuse any nested
+        // layout, because a flat write would have destroyed the grid, which
+        // left a floored column armed on every 2D layout. With orientation 0 a
+        // top-level node is a column and its size is a width whatever it holds,
+        // so the correction works on those and carries the children through.
+        this.timeout(30000);
         const columnKit = await api();
+        const { width, before } = await quietly(async () => {
+            const measured = (await settle()).reduce((a, b) => a + b, 0);
+            assert.ok(measured - FLOOR >= FLOOR, `editor area ${measured} too narrow for this setup`);
 
-        assert.strictEqual(await columnKit.floorGuard.run(), false, 'must refuse a nested layout');
+            // One ordinary column beside a column split into two rows, the
+            // split one parked exactly on the floor.
+            await vscode.commands.executeCommand('vscode.setEditorLayout', {
+                orientation: 0,
+                groups: [
+                    { size: measured - FLOOR },
+                    { size: FLOOR, groups: [{ size: 1 }, { size: 1 }] }
+                ]
+            });
+            await settle();
+            return {
+                width: measured,
+                before: await vscode.commands.executeCommand<EditorLayout>('vscode.getEditorLayout')
+            };
+        });
+        assert.ok(
+            before.groups.some(g => g.groups && g.groups.length > 0),
+            'setup did not produce a nested grid'
+        );
+        assert.strictEqual(
+            before.groups[1].size,
+            FLOOR,
+            `setup did not reach the floor: ${JSON.stringify(before)}`
+        );
+
+        columnKit.floorGuard.resume();
+        assert.strictEqual(await columnKit.floorGuard.run(), true, 'the floored column was not corrected');
 
         const after = await vscode.commands.executeCommand<EditorLayout>('vscode.getEditorLayout');
-        assert.strictEqual(
-            after.groups.length,
-            before.groups.length,
-            'nested grid was flattened'
-        );
+        assert.strictEqual(after.groups.length, before.groups.length, 'nested grid was flattened');
         assert.ok(
             after.groups.some(g => g.groups && g.groups.length > 0),
             'nesting was lost'
+        );
+        assert.strictEqual(after.groups[1].size, FLOOR + CORRECTION_MARGIN);
+        assert.strictEqual(
+            after.groups.reduce((total, g) => total + (g.size ?? 0), 0),
+            width,
+            'the correction rescaled the editor area'
+        );
+    });
+
+    test('leaves a stack of rows alone, whose sizes are heights', async () => {
+        // Orientation 1 means the top-level sizes are heights, and the trigger
+        // for those is minimumHeight, not the 220 width floor. Correcting them
+        // against a width would silently undo the user's drag.
+        await vscode.commands.executeCommand('vscode.setEditorLayout', {
+            orientation: 1,
+            groups: [{ size: 70 }, { size: 400 }]
+        });
+        await new Promise(resolve => setTimeout(resolve, 200));
+        const before = await vscode.commands.executeCommand<EditorLayout>('vscode.getEditorLayout');
+        const columnKit = await api();
+        columnKit.floorGuard.resume();
+
+        assert.strictEqual(await columnKit.floorGuard.run(), false, 'rows are not columns');
+
+        const after = await vscode.commands.executeCommand<EditorLayout>('vscode.getEditorLayout');
+        assert.deepStrictEqual(
+            after.groups.map(g => g.size),
+            before.groups.map(g => g.size),
+            'a stack of rows was resized against a width floor'
         );
     });
 

@@ -30,6 +30,18 @@ export function leaves(nodes: LayoutNode[], out: LayoutNode[] = []): LayoutNode[
     return out;
 }
 
+/**
+ * How many leaves sit under each top-level node, in order.
+ *
+ * A top-level node is a column whatever is inside it: with orientation 0 its
+ * `size` is a width even when it holds a stack of rows. Knowing how many groups
+ * each one covers is what maps the columns back onto the tab groups, which are
+ * numbered across the whole grid in leaf order.
+ */
+export function leafSpans(nodes: LayoutNode[]): number[] {
+    return nodes.map(node => leaves([node]).length);
+}
+
 /** How far above the floor a corrected column is placed. */
 export const CORRECTION_MARGIN = 24;
 

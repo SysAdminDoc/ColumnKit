@@ -3,6 +3,7 @@ import {
     DEFAULT_FLOOR,
     EditorLayout,
     LayoutHistory,
+    ColumnFloor,
     SETTINGS_FLOOR,
     TabPlacement,
     correctFloor,
@@ -60,37 +61,45 @@ function assessFloorRisk(previous: EditorLayout | undefined, columns: number): b
     return floorRisk(
         previous && measureEditorWidth(previous, DEFAULT_FLOOR),
         columns,
-        currentFloors(),
+        currentFloors(previous),
         DEFAULT_FLOOR
     );
 }
 
 /**
- * The minimum width the pane in this column asks for.
+ * The two widths that matter for the pane in a column of width `size`.
  *
  * VS Code compares a group against its own active pane's `minimumWidth`, not a
- * global constant: the Settings editor asks for 500 where a chat panel asks for
- * 220. There is no API that reports it, and the panes that override it share
- * one observable trait: no `TabInput` class, so `tab.input` is undefined.
- * Settings, Keyboard Shortcuts, the Extension editor and Welcome are all in that
- * set.
+ * global constant, and there is no API that reports it. The panes that override
+ * it share one observable trait: no `TabInput` class, so `tab.input` is
+ * undefined. Matching on the label instead is worse than useless, being
+ * localized.
  *
- * Matching on the label was worse than useless. It is localized, so every
- * non-English UI fell through to 220, and believing 220 of a pane that really
- * wants 500 makes it look like a DONOR with 280px to spare. Taking that space
- * gets clamped straight back to its 500 minimum, which is the exact value that
- * arms the expand. Assuming the widest known floor for anything unrecognised
- * errs toward giving a pane too much room, which is harmless.
+ * But `input === undefined` is not a Settings detector. Measured on 1.136.1:
+ * Keyboard Shortcuts, the Search editor, Welcome and the Extension editor all
+ * report undefined too, and all four sit happily at 220. Only Settings is
+ * clamped to 500, and VS Code does that clamping itself the moment the pane
+ * opens. So the width the column already has is the evidence: a column at
+ * exactly 500 holding an unclassifiable pane is Settings on its floor and must
+ * be raised, while the same pane at 300 is not on any floor and must be left
+ * alone. Assuming 500 for all of them dragged 300px columns out to 524.
+ *
+ * The donor side stays pessimistic. Taking space from a pane that really does
+ * want 500 gets clamped straight back to exactly 500, which is the value that
+ * arms the expand, so the correction would create the bug it exists to prevent.
  */
-function floorForTab(tab: vscode.Tab | undefined): number {
+function floorForTab(tab: vscode.Tab | undefined, size: number): ColumnFloor {
     if (tab && tab.input === undefined) {
-        return SETTINGS_FLOOR;
+        return {
+            floor: size === SETTINGS_FLOOR ? SETTINGS_FLOOR : DEFAULT_FLOOR,
+            donorFloor: SETTINGS_FLOOR
+        };
     }
-    return DEFAULT_FLOOR;
+    return { floor: DEFAULT_FLOOR, donorFloor: DEFAULT_FLOOR };
 }
 
 /**
- * A floor per layout leaf, in grid order.
+ * A floor pair per layout leaf, in grid order.
  *
  * `getEditorLayout` reports the ACTIVE editor part, while `tabGroups.all` spans
  * every part with `viewColumn` numbered across all of them. With a floating
@@ -99,21 +108,30 @@ function floorForTab(tab: vscode.Tab | undefined): number {
  * were never at risk. When the counts disagree there is no sound mapping, so
  * assume the ordinary floor rather than guess.
  */
-function floorsForColumns(count: number): number[] {
+function floorsForColumns(sizes: number[]): ColumnFloor[] {
     const groups = vscode.window.tabGroups.all;
-    if (groups.length !== count) {
-        return Array.from({ length: count }, () => DEFAULT_FLOOR);
+    if (groups.length !== sizes.length) {
+        return sizes.map(() => ({ floor: DEFAULT_FLOOR, donorFloor: DEFAULT_FLOOR }));
     }
     const byColumn = new Map<number, vscode.TabGroup>();
     for (const group of groups) {
         byColumn.set(group.viewColumn, group);
     }
-    return Array.from({ length: count }, (_, i) => floorForTab(byColumn.get(i + 1)?.activeTab));
+    return sizes.map((size, i) => floorForTab(byColumn.get(i + 1)?.activeTab, size));
 }
 
-/** Floors for the groups currently open, used to size a request before writing. */
-function currentFloors(): number[] {
-    return vscode.window.tabGroups.all.map(group => floorForTab(group.activeTab));
+/**
+ * Floors for the groups currently open, used to size a request before writing.
+ *
+ * Only the arming width matters here: the question is how much room a column
+ * count needs, not who can lend to whom.
+ */
+function currentFloors(layout: EditorLayout | undefined): number[] {
+    if (!layout) {
+        return [];
+    }
+    const sizes = leaves(layout.groups).map(node => node.size ?? 0);
+    return floorsForColumns(sizes).map(f => f.floor);
 }
 
 /** User-initiated layout changes only. Floor corrections never land here. */
@@ -576,7 +594,7 @@ async function setColumns(columns: number): Promise<void> {
     // state this extension exists to prevent, so cap the request instead.
     const fits = maxColumns(
         previous && measureEditorWidth(previous, DEFAULT_FLOOR),
-        currentFloors(),
+        currentFloors(previous),
         DEFAULT_FLOOR
     );
     const capped = fits !== undefined && columns > fits;
@@ -957,7 +975,7 @@ class FloorGuard {
             }
 
             const sizes = layout.groups.map(n => n.size ?? 0);
-            const floors = floorsForColumns(sizes.length);
+            const floors = floorsForColumns(sizes);
 
             // A group created moments ago reports the raw weight it was written
             // with until the grid lays it out, so a read straight after a write

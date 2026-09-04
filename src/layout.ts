@@ -243,6 +243,26 @@ export interface Correction {
     corrected: number[];
 }
 
+/**
+ * The two widths that matter for one column, which are not always the same
+ * number.
+ *
+ * `floor` is what arms the expand: a group whose width equals it is expanded on
+ * the next click. `donorFloor` is what the pane will actually be clamped to if
+ * space is taken from it. They differ for the panes VS Code's tab model cannot
+ * classify. Settings really is clamped to 500, but Keyboard Shortcuts, the
+ * Search editor, Welcome and the Extension editor look identical through the
+ * API and sit at the ordinary 220, so treating all of them as 500-floored
+ * yanked a 300px column out to 524 for no reason. Reading the needy side from
+ * the width the column actually has, while keeping the donor side pessimistic,
+ * gets both cases right: nothing is raised that was not armed, and nothing is
+ * taken from a pane that would spring back to exactly its minimum.
+ */
+export interface ColumnFloor {
+    floor: number;
+    donorFloor: number;
+}
+
 /** True when the layout is a single flat row or column with no nested branches. */
 export function isFlat(nodes: LayoutNode[]): boolean {
     return nodes.every(n => !n.groups || n.groups.length === 0);
@@ -265,22 +285,22 @@ export function isFlat(nodes: LayoutNode[]): boolean {
  */
 export function correctFloor(
     sizes: number[],
-    floor: number | number[]
+    floor: number | number[] | ColumnFloor[]
 ): Correction | undefined {
     if (sizes.length < 2) {
         return undefined;
     }
-    // The floor is a property of whatever pane a group is showing, not a global
-    // constant: a Settings tab asks for 500 where a chat panel asks for 220.
-    // Callers that genuinely have one floor for every group still pass a number.
-    const floors = typeof floor === 'number' ? sizes.map(() => floor) : floor;
-    if (floors.length !== sizes.length) {
+    const floors = normalizeFloors(sizes.length, floor);
+    if (!floors) {
         return undefined;
     }
-    const targets = floors.map(f => f + CORRECTION_MARGIN);
+    // What a group is raised to when it is on its own floor.
+    const raiseTo = floors.map(f => f.floor + CORRECTION_MARGIN);
+    // What a group may not be pushed below when it funds someone else.
+    const keep = floors.map(f => f.donorFloor + CORRECTION_MARGIN);
 
     const needy = sizes
-        .map((size, i) => ({ i, deficit: size <= floors[i] ? targets[i] - size : 0 }))
+        .map((size, i) => ({ i, deficit: size <= floors[i].floor ? raiseTo[i] - size : 0 }))
         .filter(n => n.deficit > 0);
     if (needy.length === 0) {
         return undefined;
@@ -288,7 +308,7 @@ export function correctFloor(
 
     const needed = needy.reduce((sum, n) => sum + n.deficit, 0);
     const donors = sizes
-        .map((size, i) => ({ i, spare: size > targets[i] ? size - targets[i] : 0 }))
+        .map((size, i) => ({ i, spare: size > keep[i] ? size - keep[i] : 0 }))
         .filter(d => d.spare > 0);
     const available = donors.reduce((sum, d) => sum + d.spare, 0);
     if (available < needed) {
@@ -297,7 +317,7 @@ export function correctFloor(
 
     const next = sizes.slice();
     for (const n of needy) {
-        next[n.i] = targets[n.i];
+        next[n.i] = raiseTo[n.i];
     }
 
     let remaining = needed;
@@ -306,8 +326,8 @@ export function correctFloor(
             break;
         }
         // Every donor is capped at its own spare, so none can be pushed below
-        // target. Rounding up keeps the loop converging; the final clamp below
-        // settles any residue.
+        // what it must keep. Rounding up keeps the loop converging; the final
+        // clamp below settles any residue.
         const share = Math.min(donor.spare, Math.ceil((donor.spare / available) * needed), remaining);
         next[donor.i] -= share;
         remaining -= share;
@@ -315,7 +335,7 @@ export function correctFloor(
 
     // Total must be preserved exactly, or the write rescales the editor area.
     if (remaining !== 0) {
-        const slack = donors.find(d => next[d.i] - remaining >= targets[d.i]);
+        const slack = donors.find(d => next[d.i] - remaining >= keep[d.i]);
         if (!slack) {
             return undefined;
         }
@@ -323,5 +343,18 @@ export function correctFloor(
     }
 
     return { sizes: next, corrected: needy.map(n => n.i) };
+}
+
+function normalizeFloors(
+    count: number,
+    floor: number | number[] | ColumnFloor[]
+): ColumnFloor[] | undefined {
+    if (typeof floor === 'number') {
+        return Array.from({ length: count }, () => ({ floor, donorFloor: floor }));
+    }
+    if (floor.length !== count) {
+        return undefined;
+    }
+    return floor.map(f => (typeof f === 'number' ? { floor: f, donorFloor: f } : f));
 }
 

@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import type { ColumnKitApi } from '../extension';
-import { CORRECTION_MARGIN, EditorLayout, leaves } from '../layout';
+import { CORRECTION_MARGIN, EditorLayout, SETTINGS_FLOOR, leaves } from '../layout';
 
 const FLOOR = 220;
 
@@ -70,6 +70,13 @@ suite('FloorGuard', () => {
     // starts from an armed guard rather than inheriting another suite's state.
     setup(async () => {
         (await api()).floorGuard.resume();
+    });
+
+    // Settings and Keyboard Shortcuts stay open otherwise, and the next test's
+    // floors would be read from whichever of them is still active.
+    teardown(async () => {
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        await new Promise(resolve => setTimeout(resolve, 100));
     });
 
     test('a layout really can hold groups sitting exactly on the floor', async () => {
@@ -170,6 +177,73 @@ suite('FloorGuard', () => {
             after.groups.some(g => g.groups && g.groups.length > 0),
             'nesting was lost'
         );
+    });
+
+    // CK-39. Both of these open a pane VS Code's tab model cannot classify, so
+    // `tab.input` is undefined for each. Only one of them is really floored.
+    async function narrowSecondColumn(): Promise<number> {
+        const width = (await settle()).reduce((a, b) => a + b, 0);
+        assert.ok(width - 300 >= FLOOR, `editor area ${width} is too narrow for this setup`);
+        await vscode.commands.executeCommand('vscode.setEditorLayout', {
+            orientation: 0,
+            groups: [{ size: width - 300 }, { size: 300 }]
+        });
+        await settle();
+        await vscode.commands.executeCommand('workbench.action.focusSecondEditorGroup');
+        // Let the correction the focus change schedules run to completion, so
+        // what happens next is attributable to the pane and nothing else.
+        await new Promise(resolve => setTimeout(resolve, 600));
+        return width;
+    }
+
+    test('leaves Keyboard Shortcuts alone, which is not clamped to 500', async function () {
+        // It reports `input === undefined` exactly like Settings does. Assuming
+        // that means a 500px floor yanked this column from 300 out to 524.
+        this.timeout(30000);
+        await narrowSecondColumn();
+        const columnKit = await api();
+
+        await vscode.commands.executeCommand('workbench.action.openGlobalKeybindings');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        const opened = await settle();
+        assert.strictEqual(
+            opened[1],
+            300,
+            `VS Code moved the column on its own, so this test proves nothing: ${JSON.stringify(opened)}`
+        );
+
+        columnKit.floorGuard.resume();
+        assert.strictEqual(
+            await columnKit.floorGuard.run(),
+            false,
+            'a pane sitting at 300 is on no floor and must not be moved'
+        );
+        assert.deepStrictEqual(await settle(), opened, 'the guard resized a column that was not armed');
+    });
+
+    test('still raises Settings, which really is clamped to 500', async function () {
+        // Positive control for the test above. Without it, a guard that had
+        // simply stopped working would look identical.
+        this.timeout(30000);
+        await narrowSecondColumn();
+        const columnKit = await api();
+
+        await vscode.commands.executeCommand('workbench.action.openSettings');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        const opened = await settle();
+        assert.strictEqual(
+            opened[1],
+            SETTINGS_FLOOR,
+            `Settings should have been clamped to its own minimum, got ${JSON.stringify(opened)}`
+        );
+
+        columnKit.floorGuard.resume();
+        assert.strictEqual(
+            await columnKit.floorGuard.run(),
+            true,
+            'a Settings pane on exactly 500 is armed and must be raised'
+        );
+        assert.strictEqual((await settle())[1], SETTINGS_FLOOR + CORRECTION_MARGIN);
     });
 
     test('respects the autoCorrect setting', async () => {

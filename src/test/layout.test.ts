@@ -207,6 +207,44 @@ suite('correctFloor', () => {
     test('refuses a floor list that does not line up with the sizes', () => {
         assert.strictEqual(correctFloor([220, 600, 900], [220, 220]), undefined);
     });
+
+    // CK-39. `tab.input === undefined` covers Settings, Keyboard Shortcuts, the
+    // Search editor, Welcome and the Extension editor, but only Settings is
+    // really clamped to 500. So the width a column has decides whether it is on
+    // a floor, while the donor side stays pessimistic.
+    const unclassifiable = { floor: DEFAULT_FLOOR, donorFloor: SETTINGS_FLOOR };
+    const settingsOnFloor = { floor: SETTINGS_FLOOR, donorFloor: SETTINGS_FLOOR };
+    const ordinary = { floor: DEFAULT_FLOOR, donorFloor: DEFAULT_FLOOR };
+
+    test('leaves an unclassifiable pane alone when it is not on any floor', () => {
+        // Keyboard Shortcuts at 300 looks exactly like Settings through the API.
+        // Treating it as 500-floored dragged the column out to 524 and moved a
+        // sash the user never touched.
+        assert.strictEqual(correctFloor([300, 552], [unclassifiable, ordinary]), undefined);
+    });
+
+    test('still raises Settings when it is parked on its own 500 floor', () => {
+        const result = correctFloor([500, 900], [settingsOnFloor, ordinary]);
+        assert.ok(result, 'a Settings pane at exactly 500 is armed and must be raised');
+        assert.strictEqual(result.sizes[0], SETTINGS_FLOOR + CORRECTION_MARGIN);
+        assert.strictEqual(sum(result.sizes), 1400, 'total moved');
+    });
+
+    test('will not take space from a pane that would spring back to its minimum', () => {
+        // 540 clears the ordinary target but a pane that really wants 500 has
+        // only 16px above its own, which cannot fund a 24px deficit. Taking it
+        // anyway gets clamped back to exactly 500, arming the expand.
+        assert.strictEqual(correctFloor([220, 540], [ordinary, unclassifiable]), undefined);
+    });
+
+    test('lets an unclassifiable pane donate once it is genuinely wide', () => {
+        // Positive control for the test above: the pessimistic donor floor must
+        // not mean such a pane can never lend anything.
+        const result = correctFloor([220, 900], [ordinary, unclassifiable]);
+        assert.ok(result);
+        assert.strictEqual(result.sizes[0], DEFAULT_FLOOR + CORRECTION_MARGIN);
+        assert.strictEqual(sum(result.sizes), 1120, 'total moved');
+    });
 });
 
 suite('measureEditorWidth', () => {

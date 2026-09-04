@@ -124,25 +124,34 @@ function floorForTab(tab: vscode.Tab | undefined, size: number | undefined): Col
  * were never at risk. When the counts disagree there is no sound mapping, so
  * assume the ordinary floor rather than guess.
  */
-function floorsForColumns(sizes: number[]): ColumnFloor[] {
+function floorsForColumns(sizes: number[]): ColumnFloor[] | undefined {
     return floorsForNodes(sizes.map(size => ({ size })));
 }
 
 /**
- * A floor pair per top-level node, which is per column even on a 2D grid.
+ * A floor pair per top-level node, which is per column even on a 2D grid, or
+ * undefined when the groups cannot be matched to the layout at all.
  *
  * A column holding a stack of rows takes the widest floor of anything in that
  * stack: the column has to be wide enough for all of them. Groups inside a
  * stack are matched to tabs by leaf order, because `viewColumn` numbers the
  * grid in exactly that order.
+ *
+ * `getEditorLayout` reports the ACTIVE editor part while `tabGroups.all` spans
+ * every part, so with a floating editor window open the two disagree and there
+ * is no sound mapping between them. Assuming the ordinary floor there is not
+ * the safe answer, it is the dangerous one: a Settings column at 700 then looks
+ * like a donor with 456px to spare, and taking that space gets clamped straight
+ * back to exactly 500, which is the width that arms the expand. The guard would
+ * be creating the bug it exists to prevent, so it declines instead.
  */
-function floorsForNodes(nodes: LayoutNode[]): ColumnFloor[] {
+function floorsForNodes(nodes: LayoutNode[]): ColumnFloor[] | undefined {
     const ordinary = () => ({ floor: DEFAULT_FLOOR, donorFloor: DEFAULT_FLOOR });
     const spans = leafSpans(nodes);
     const total = spans.reduce((a, b) => a + b, 0);
     const groups = vscode.window.tabGroups.all;
     if (groups.length !== total) {
-        return nodes.map(ordinary);
+        return undefined;
     }
     const byColumn = new Map<number, vscode.TabGroup>();
     for (const group of groups) {
@@ -179,7 +188,10 @@ function currentFloors(layout: EditorLayout | undefined): number[] {
         return [];
     }
     const sizes = leaves(layout.groups).map(node => node.size ?? 0);
-    return floorsForColumns(sizes).map(f => f.floor);
+    // An empty list is the honest answer when the panes cannot be identified:
+    // requiredWidth then pays the ordinary floor for every column, which is the
+    // right default for sizing a request. Nothing is resized on this path.
+    return floorsForColumns(sizes)?.map(f => f.floor) ?? [];
 }
 
 /** User-initiated layout changes only. Floor corrections never land here. */
@@ -271,10 +283,14 @@ function pinnedLayoutFor(
     if (sizes.length < 2 || sizes.some(size => size < DEFAULT_FLOOR)) {
         return undefined;
     }
+    const floors = floorsForColumns(sizes);
+    if (!floors) {
+        return undefined;
+    }
     return withPinnedWidths(
         sizes,
         pinsForColumns(context, sizes.length),
-        floorsForColumns(sizes).map(floor => floor.floor)
+        floors.map(floor => floor.floor)
     );
 }
 
@@ -984,7 +1000,7 @@ async function evenSplitHere(): Promise<void> {
     const atTopLevel = layout.orientation === 0 && isTopLevelLeaf(layout.groups, leafIndex);
     if (atTopLevel) {
         const floors = floorsForNodes(next.groups);
-        if (next.groups.some((node, i) => (node.size ?? 0) <= floors[i].floor)) {
+        if (!floors || next.groups.some((node, i) => (node.size ?? 0) <= floors[i].floor)) {
             notify(
                 vscode.l10n.t(
                     'ColumnKit: evening these would put a column at the minimum width, where a click expands it.'
@@ -1200,13 +1216,16 @@ async function setColumnShare(percent: number): Promise<void> {
     }
 
     const strategy = config().get<RemainderStrategy>('remainderStrategy', 'even');
-    const next = withColumnShare(
-        sizes,
-        index,
-        percent,
-        strategy === 'proportional' ? 'proportional' : 'even',
-        floorsForColumns(sizes).map(floor => floor.floor)
-    );
+    const shareFloors = floorsForColumns(sizes);
+    const next = shareFloors
+        ? withColumnShare(
+            sizes,
+            index,
+            percent,
+            strategy === 'proportional' ? 'proportional' : 'even',
+            shareFloors.map(floor => floor.floor)
+        )
+        : undefined;
     if (!next) {
         notify(
             vscode.l10n.t(
@@ -1666,6 +1685,14 @@ class FloorGuard {
             const nodes = layout.groups;
             const sizes = nodes.map(n => n.size ?? 0);
             const floors = floorsForNodes(nodes);
+            if (!floors) {
+                // Another editor part is open, so the groups cannot be matched
+                // to this grid. Guessing the ordinary floor here is what lets a
+                // wide-floored pane be treated as a donor and clamped back onto
+                // its minimum by our own write.
+                log?.trace('floors unknown, declining to correct');
+                return false;
+            }
 
             // A group created moments ago reports the raw weight it was written
             // with until the grid lays it out, so a read straight after a write

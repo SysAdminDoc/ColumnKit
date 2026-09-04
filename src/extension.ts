@@ -11,7 +11,9 @@ import {
     isFlat,
     leaves,
     maxColumns,
-    measureEditorWidth
+    measureEditorWidth,
+    RemainderStrategy,
+    withColumnShare
 } from './layout';
 import { ASSET_PREFIX, Release, UpdateDecision, decide, isRelease, shouldCheck } from './update';
 
@@ -843,6 +845,139 @@ async function setColumns(columns: number): Promise<void> {
     );
 }
 
+/** Shares offered for the active column. Round numbers people actually mean. */
+const SHARE_PRESETS = [25, 33, 40, 50, 60, 67, 75];
+
+/**
+ * The active group's position in the grid, or undefined when it cannot be
+ * placed.
+ *
+ * `tabGroups` spans every editor part while the layout describes the active one
+ * alone, so a mismatch means the active group may not even be in the grid this
+ * would write to.
+ */
+function activeColumnIndex(columns: number): number | undefined {
+    if (vscode.window.tabGroups.all.length !== columns) {
+        return undefined;
+    }
+    const index = vscode.window.tabGroups.activeTabGroup.viewColumn - 1;
+    return index >= 0 && index < columns ? index : undefined;
+}
+
+/**
+ * Gives the active column a share of the editor area.
+ *
+ * A count is often not what someone means. "Make this one half the width" is,
+ * and there is no way to say it otherwise.
+ */
+async function setColumnShare(percent: number): Promise<void> {
+    const layout = await readLayout();
+    const sizes = layout ? leaves(layout.groups).map(node => node.size ?? 0) : [];
+    if (!layout || !isFlat(layout.groups) || layout.orientation !== 0 || sizes.length < 2) {
+        notify(vscode.l10n.t('ColumnKit: this needs a flat row of two or more columns.'), 4000);
+        return;
+    }
+    if (sizes.some(size => size < DEFAULT_FLOOR)) {
+        // Raw weights from a write that has not laid out yet, not a measurement.
+        notify(vscode.l10n.t('ColumnKit: the columns have not settled yet, try again.'), 3000);
+        return;
+    }
+    const index = activeColumnIndex(sizes.length);
+    if (index === undefined) {
+        notify(vscode.l10n.t('ColumnKit: could not tell which column is active.'), 4000);
+        return;
+    }
+
+    const strategy = config().get<RemainderStrategy>('remainderStrategy', 'even');
+    const next = withColumnShare(
+        sizes,
+        index,
+        percent,
+        strategy === 'proportional' ? 'proportional' : 'even',
+        floorsForColumns(sizes).map(floor => floor.floor)
+    );
+    if (!next) {
+        notify(
+            vscode.l10n.t(
+                'ColumnKit: {0}% would put a column at the minimum width, where a click expands it.',
+                percent
+            ),
+            5000
+        );
+        return;
+    }
+
+    history.record({ layout });
+    floorGuard?.beginHold();
+    try {
+        await vscode.commands.executeCommand('vscode.setEditorLayout', {
+            orientation: 0,
+            groups: next.map(size => ({ size }))
+        });
+    } catch {
+        history.pop();
+        notify(vscode.l10n.t('ColumnKit: could not resize the columns.'), 3000);
+        return;
+    } finally {
+        floorGuard?.endHold(UNDO_SETTLE_MS);
+    }
+
+    log?.trace(`column ${index + 1} to ${percent}% (${strategy}): ${JSON.stringify(next)}`);
+    notify(
+        vscode.l10n.t(
+            'ColumnKit: column {0} is now {1}% of the width.',
+            index + 1,
+            Math.round((next[index] / next.reduce((a, b) => a + b, 0)) * 100)
+        )
+    );
+}
+
+/**
+ * Asks for a share, or applies one given directly.
+ *
+ * The argument makes the command usable from a keybinding or another extension
+ * without going through the picker, and is how the tests drive it.
+ */
+async function pickColumnWidth(percent?: number): Promise<void> {
+    if (typeof percent === 'number') {
+        await setColumnShare(percent);
+        return;
+    }
+
+    const items: (vscode.QuickPickItem & { percent?: number })[] = SHARE_PRESETS.map(percent => ({
+        label: `${percent}%`,
+        percent
+    }));
+    const CUSTOM = vscode.l10n.t('Custom...');
+    items.push({ label: CUSTOM });
+
+    const choice = await vscode.window.showQuickPick(items, {
+        title: 'ColumnKit',
+        placeHolder: vscode.l10n.t('Share of the editor area for the active column')
+    });
+    if (!choice) {
+        return;
+    }
+    if (choice.percent !== undefined) {
+        await setColumnShare(choice.percent);
+        return;
+    }
+
+    const typed = await vscode.window.showInputBox({
+        title: 'ColumnKit',
+        prompt: vscode.l10n.t('Share of the editor area for the active column, 1 to 99'),
+        validateInput: value => {
+            const percent = Number(value);
+            return Number.isInteger(percent) && percent > 0 && percent < 100
+                ? undefined
+                : vscode.l10n.t('Enter a whole number between 1 and 99.');
+        }
+    });
+    if (typed) {
+        await setColumnShare(Number(typed));
+    }
+}
+
 async function pickColumns(): Promise<void> {
     // From the layout, not tabGroups.all: the picker describes what a write
     // would do, and a write only ever touches the active editor part.
@@ -954,6 +1089,7 @@ class StatusBar {
                 .map(n => `[${vscode.l10n.t('{0} columns', n)}](command:columnkit.columns${n})`)
                 .join(' · ') +
             `\n\n[${vscode.l10n.t('Choose a count...')}](command:columnkit.pickColumns)` +
+            ` · [${vscode.l10n.t('Set this column\'s width...')}](command:columnkit.setColumnWidth)` +
             ` · [${vscode.l10n.t('Undo the last ColumnKit change')}](command:columnkit.undoLayout)`
         );
         // Command links are inert without this.
@@ -1292,7 +1428,10 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
     context.subscriptions.push(
         vscode.commands.registerCommand('columnkit.even', evenColumns),
         vscode.commands.registerCommand('columnkit.pickColumns', pickColumns),
-        vscode.commands.registerCommand('columnkit.undoLayout', undoLayout)
+        vscode.commands.registerCommand('columnkit.undoLayout', undoLayout),
+        vscode.commands.registerCommand('columnkit.setColumnWidth', (percent?: number) =>
+            pickColumnWidth(typeof percent === 'number' ? percent : undefined)
+        )
     );
 
     // Preset commands need to exist as real command ids so status bar items and

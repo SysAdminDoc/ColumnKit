@@ -283,6 +283,50 @@ suite('FloorGuard', () => {
         assert.strictEqual((await settle())[1], SETTINGS_FLOOR + CORRECTION_MARGIN);
     });
 
+    test('gives the active column the share it was asked for', async function () {
+        // CK-19. A count is not always what someone means; "half the width" is.
+        this.timeout(30000);
+        await vscode.commands.executeCommand('columnkit.columns3');
+        await settle();
+        await vscode.commands.executeCommand('workbench.action.focusSecondEditorGroup');
+        await new Promise(resolve => setTimeout(resolve, 300));
+        (await api()).floorGuard.resume();
+
+        await vscode.commands.executeCommand('columnkit.setColumnWidth', 40);
+        const sizes = await settle();
+        const total = sizes.reduce((a, b) => a + b, 0);
+
+        assert.strictEqual(sizes.length, 3);
+        assert.ok(
+            Math.abs(sizes[1] / total - 0.4) < 0.02,
+            `column 2 got ${Math.round((sizes[1] / total) * 100)}%, not 40: ${JSON.stringify(sizes)}`
+        );
+        // The default strategy is even, so the other two match to a pixel.
+        assert.ok(
+            Math.abs(sizes[0] - sizes[2]) <= 1,
+            `the remainder was not shared evenly: ${JSON.stringify(sizes)}`
+        );
+        for (const size of sizes) {
+            assert.ok(size > FLOOR, `group left at ${size}`);
+        }
+    });
+
+    test('refuses a share that would put another column on the floor', async function () {
+        this.timeout(30000);
+        const columnKit = await api();
+        await vscode.commands.executeCommand('columnkit.columns3');
+        await settle();
+        await vscode.commands.executeCommand('workbench.action.focusSecondEditorGroup');
+        await new Promise(resolve => setTimeout(resolve, 300));
+        columnKit.floorGuard.resume();
+        const before = await settle();
+
+        await vscode.commands.executeCommand('columnkit.setColumnWidth', 90);
+
+        assert.deepStrictEqual(await settle(), before, 'the layout should not have moved');
+        assert.match(columnKit.lastNotification()?.message ?? '', /minimum width/);
+    });
+
     test('does not watch on a timer unless asked to', async () => {
         // CK-30. Polling is the only signal for a sash drag, and it is the one
         // thing in here that costs something when nothing is happening.

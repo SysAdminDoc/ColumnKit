@@ -6,6 +6,7 @@
     "command.even.title": "Even Out Columns",
     "command.pickColumns.title": "Set Column Count...",
     "command.undoLayout.title": "Undo ColumnKit Change",
+    "command.setColumnWidth.title": "Set Active Column Width...",
     "command.columns2.title": "2 Columns",
     "command.columns3.title": "3 Columns",
     "command.columns4.title": "4 Columns",
@@ -17,5 +18,6 @@
     "config.showEditorTitleButton": "Also show an Even Out Columns icon in each editor group's title bar. Off by default because narrow columns push it into the overflow menu.",
     "config.autoCorrect": "Keep every editor group clear of its minimum width. VS Code expands a group on click when its width is exactly the minimum, and there is no setting to disable that. The expand happens before an extension is told the group became active, so every group is raised ahead of time rather than the one you clicked. Turn it off to restore stock behaviour.",
     "config.checkForUpdates": "Check GitHub once a day for a newer release. VS Code never auto-updates an extension installed from a .vsix, so without this you would not hear about fixes. Turn it off and ColumnKit makes no network requests at all.",
+    "config.remainderStrategy": "How the other columns share what is left when you set one column's width. Even gives them equal widths. Proportional keeps their relative sizes, so a column that was already wider stays wider.",
     "config.watchWhileIdle": "Also check the column widths every couple of seconds while this window has focus. Dragging a sash raises no event an extension can see, so a column you drag onto the minimum width stays armed until something else happens. Off by default because it is a timer rather than a reaction to anything."
 }

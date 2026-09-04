@@ -31,6 +31,8 @@ Hover it and you get the rest: jump straight to 2, 3, 4, 6 or 8 columns, pick an
 
 The numbered actions change how many columns exist. Ask for fewer than you have open and the surplus columns' tabs get merged into the last one. Ask for more and you get empty columns. Nothing is closed and no editor is lost, but the arrangement does change, which is what undo is for. Undo brings back the widths and moves the merged tabs back to the columns they came from.
 
+Sometimes a count isn't what you mean. `Set Active Column Width...` gives the focused column a share of the editor area, 25 through 75 percent or anything you type, and the rest of the columns take what's left. `columnkit.remainderStrategy` decides how: `even` gives them equal widths, `proportional` keeps whatever ratio they already had. A share that would push any column onto the minimum width is refused rather than applied.
+
 Ask for more columns than the window can hold and you get as many as actually fit. Splitting past that point puts every column on the minimum width, which is the exact thing that makes them expand when you click, so the count gets capped and the message tells you what you got.
 
 If you would rather have the numbers as permanent buttons instead of a hover menu, set `columnkit.statusBarPresets`.
@@ -44,6 +46,7 @@ If you would rather have the numbers as permanent buttons instead of a hover men
 | `columnkit.statusBarAlignment` | `left` | Which end of the status bar the buttons sit on. |
 | `columnkit.showEditorTitleButton` | `false` | Adds an `Even` icon to each editor group's title bar. Off by default, because a narrow column pushes it straight into the overflow menu where it stops being one click. |
 | `columnkit.checkForUpdates` | `true` | Asks GitHub once a day whether a newer release exists. See Updates below. Turn it off and ColumnKit makes no network requests at all. |
+| `columnkit.remainderStrategy` | `even` | How the other columns share what's left when you set one column's width. `proportional` keeps their existing ratio instead of equalising them. |
 | `columnkit.watchWhileIdle` | `false` | Re-checks the widths every couple of seconds while the window has focus, which is the only way to catch a column you drag onto the minimum yourself. Off by default because it's a timer rather than a reaction to anything. |
 
 ## Commands
@@ -53,6 +56,7 @@ Everything is in the palette under `ColumnKit`, if you'd rather type than click.
 - `ColumnKit: Even Out Columns`
 - `ColumnKit: Set Column Count...`
 - `ColumnKit: Undo ColumnKit Change`
+- `ColumnKit: Set Active Column Width...`
 - `ColumnKit: 2 Columns`, `3`, `4`, `5`, `6` and `8 Columns`
 
 Counts the palette doesn't list, up to 12, are in the picker.

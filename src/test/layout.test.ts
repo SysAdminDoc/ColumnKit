@@ -10,7 +10,9 @@ import {
     leaves,
     maxColumns,
     measureEditorWidth,
-    requiredWidth
+    requiredWidth,
+    weightedSizes,
+    withColumnShare
 } from '../layout';
 import { describeColumnChange } from '../extension';
 
@@ -426,6 +428,100 @@ suite('floorRisk', () => {
 
     test('refuses a nonsense column count rather than dividing by zero', () => {
         assert.strictEqual(floorRisk(852, 0, ordinary, floor), false);
+    });
+});
+
+suite('weightedSizes', () => {
+    test('splits in proportion and preserves the total exactly', () => {
+        assert.deepStrictEqual(weightedSizes(900, [1, 1, 1]), [300, 300, 300]);
+        assert.deepStrictEqual(weightedSizes(800, [2, 1, 1]), [400, 200, 200]);
+    });
+
+    test('hands the rounding remainder out rather than losing it', () => {
+        const sizes = weightedSizes(1000, [1, 1, 1]);
+        assert.ok(sizes);
+        assert.strictEqual(sizes.reduce((a, b) => a + b, 0), 1000);
+        assert.deepStrictEqual([...sizes].sort((a, b) => a - b), [333, 333, 334]);
+    });
+
+    test('preserves the total across a sweep of awkward splits', () => {
+        for (let total = 700; total <= 3000; total += 37) {
+            for (const weights of [[1, 1], [2, 1, 1], [3, 2, 1], [1, 1, 1, 1, 1, 1, 1]]) {
+                const sizes = weightedSizes(total, weights);
+                assert.ok(sizes, `refused ${total} / ${weights}`);
+                assert.strictEqual(
+                    sizes.reduce((a, b) => a + b, 0),
+                    total,
+                    `total moved for ${total} / ${weights}`
+                );
+            }
+        }
+    });
+
+    test('refuses weights that cannot describe a layout', () => {
+        assert.strictEqual(weightedSizes(900, []), undefined);
+        assert.strictEqual(weightedSizes(900, [1, 0]), undefined);
+        assert.strictEqual(weightedSizes(900, [1, -2]), undefined);
+        assert.strictEqual(weightedSizes(900, [1, Number.NaN]), undefined);
+    });
+});
+
+suite('withColumnShare', () => {
+    const floors = (n: number) => Array.from({ length: n }, () => DEFAULT_FLOOR);
+
+    test('gives the named column its share and splits the rest evenly', () => {
+        const next = withColumnShare([300, 300, 300], 1, 50, 'even', floors(3));
+        assert.deepStrictEqual(next, [225, 450, 225]);
+    });
+
+    test('proportional keeps the other columns in their existing ratio', () => {
+        // The two readings of "leave the others alone" differ visibly: even
+        // would end 360/360 here, proportional ends 320/400.
+        const next = withColumnShare([400, 300, 500], 1, 40, 'proportional', floors(3));
+        assert.ok(next);
+        assert.strictEqual(next[1], 480);
+        assert.strictEqual(next[0] + next[2], 720);
+        assert.ok(next[2] > next[0], 'the wider column should have stayed wider');
+
+        const even = withColumnShare([400, 300, 500], 1, 40, 'even', floors(3));
+        assert.ok(even);
+        assert.strictEqual(even[0], even[2], 'even should have equalised them');
+        assert.notDeepStrictEqual(next, even, 'the two strategies must differ here');
+    });
+
+    test('preserves the total whichever strategy is used', () => {
+        for (const strategy of ['even', 'proportional'] as const) {
+            for (const percent of [20, 33, 50, 66, 80]) {
+                const next = withColumnShare([400, 500, 600, 700], 2, percent, strategy, floors(4));
+                if (next) {
+                    assert.strictEqual(next.reduce((a, b) => a + b, 0), 2200, `${strategy} ${percent}`);
+                }
+            }
+        }
+    });
+
+    test('refuses a share that would put another column on its floor', () => {
+        // 80% of 900 leaves 180 for two columns, which is under the minimum.
+        assert.strictEqual(withColumnShare([300, 300, 300], 0, 80, 'even', floors(3)), undefined);
+    });
+
+    test('refuses a share that would put the named column on its floor', () => {
+        assert.strictEqual(withColumnShare([300, 300, 300], 0, 20, 'even', floors(3)), undefined);
+    });
+
+    test('honours a column with a wider floor of its own', () => {
+        // The Settings column cannot go under 500, so a share that would is refused.
+        const settings = [DEFAULT_FLOOR, SETTINGS_FLOOR, DEFAULT_FLOOR];
+        assert.strictEqual(withColumnShare([600, 600, 600], 0, 60, 'even', settings), undefined);
+        assert.ok(withColumnShare([600, 600, 600], 1, 40, 'even', settings));
+    });
+
+    test('refuses nonsense input rather than producing a layout', () => {
+        assert.strictEqual(withColumnShare([300], 0, 50, 'even', floors(1)), undefined);
+        assert.strictEqual(withColumnShare([300, 300], 5, 50, 'even', floors(2)), undefined);
+        assert.strictEqual(withColumnShare([300, 300], 0, 0, 'even', floors(2)), undefined);
+        assert.strictEqual(withColumnShare([300, 300], 0, 100, 'even', floors(2)), undefined);
+        assert.strictEqual(withColumnShare([300, 300], 0, 50, 'even', floors(3)), undefined);
     });
 });
 

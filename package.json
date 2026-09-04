@@ -41,6 +41,12 @@
         "icon": "$(discard)"
       },
       {
+        "command": "columnkit.setColumnWidth",
+        "title": "%command.setColumnWidth.title%",
+        "category": "%category%",
+        "icon": "$(percentage)"
+      },
+      {
         "command": "columnkit.columns2",
         "title": "%command.columns2.title%",
         "category": "%category%"
@@ -116,6 +122,15 @@
           "type": "boolean",
           "default": true,
           "description": "%config.checkForUpdates%"
+        },
+        "columnkit.remainderStrategy": {
+          "type": "string",
+          "enum": [
+            "even",
+            "proportional"
+          ],
+          "default": "even",
+          "description": "%config.remainderStrategy%"
         },
         "columnkit.watchWhileIdle": {
           "type": "boolean",

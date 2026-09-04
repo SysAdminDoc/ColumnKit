@@ -85,6 +85,18 @@ That drops a `.vsix` in `dist/`, named for the version in `package.json`, alongs
 
 On Windows, do not double-click the `.vsix`. Wherever Visual Studio or its Build Tools are installed, `.vsix` is registered to Visual Studio's own installer, which refuses VS Code extensions with a confusing message about selected products. Run `install.cmd` instead. It checks the file against `SHA256SUMS.txt`, refuses to go on if they disagree, and installs into every VS Code family editor it finds on your PATH.
 
+To check a download yourself, compare it against the checksum in `SHA256SUMS.txt`, which is attached to every release beside the `.vsix`:
+
+```
+certutil -hashfile columnkit-0.2.0.vsix SHA256
+```
+
+GitHub publishes the same digest on the release asset, so the two are independent of each other:
+
+```
+gh release view v0.2.0 --json assets --jq '.assets[] | "\(.digest)  \(.name)"'
+```
+
 Or do it yourself:
 
 ```

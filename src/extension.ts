@@ -7,6 +7,8 @@ import {
     SETTINGS_FLOOR,
     TabPlacement,
     LayoutNode,
+    RememberedLayout,
+    canRestore,
     correctFloor,
     evenSplit,
     floorRisk,
@@ -176,6 +178,69 @@ function currentFloors(layout: EditorLayout | undefined): number[] {
 
 /** User-initiated layout changes only. Floor corrections never land here. */
 const history = new LayoutHistory();
+
+/** Per workspace, never global: a geometry only means something in context. */
+const REMEMBERED_KEY = 'layout.remembered';
+
+/** Coalesces the burst of changes a single user action produces. */
+const REMEMBER_DEBOUNCE_MS = 1500;
+let rememberTimer: NodeJS.Timeout | undefined;
+
+/**
+ * Saves the current geometry against the width it was measured at.
+ *
+ * Off unless asked for. VS Code restores the editor grid itself in most cases,
+ * so writing a layout at startup by default would be fighting it for no reason.
+ */
+async function rememberLayout(context: vscode.ExtensionContext): Promise<void> {
+    if (!config().get<boolean>('rememberLayout', false)) {
+        return;
+    }
+    const layout = await readLayout();
+    const width = layout && measureEditorWidth(layout, DEFAULT_FLOOR);
+    if (!layout || width === undefined) {
+        return;
+    }
+    const remembered: RememberedLayout = {
+        width,
+        leafCount: leaves(layout.groups).length,
+        layout
+    };
+    await context.workspaceState.update(REMEMBERED_KEY, remembered);
+    log?.trace(`remembered ${remembered.leafCount} groups at ${width}px`);
+}
+
+function scheduleRemember(context: vscode.ExtensionContext): void {
+    if (rememberTimer) {
+        clearTimeout(rememberTimer);
+    }
+    rememberTimer = setTimeout(() => void rememberLayout(context), REMEMBER_DEBOUNCE_MS);
+}
+
+/** Puts a remembered geometry back, if it still describes this window. */
+async function restoreRememberedLayout(context: vscode.ExtensionContext): Promise<boolean> {
+    if (!config().get<boolean>('rememberLayout', false)) {
+        return false;
+    }
+    const saved = context.workspaceState.get<RememberedLayout>(REMEMBERED_KEY);
+    const current = await readLayout();
+    const width = current && measureEditorWidth(current, DEFAULT_FLOOR);
+    if (!current || !canRestore(saved, width, leaves(current.groups).length)) {
+        log?.debug('nothing to restore, or it was saved for a different window');
+        return false;
+    }
+
+    floorGuard?.beginHold();
+    try {
+        await vscode.commands.executeCommand('vscode.setEditorLayout', saved!.layout);
+        log?.info(`restored the remembered layout for this workspace`);
+        return true;
+    } catch {
+        return false;
+    } finally {
+        floorGuard?.endHold(UNDO_SETTLE_MS);
+    }
+}
 
 /** Set by activate(). Undo needs it to hold corrections off during a restore. */
 let floorGuard: FloorGuard | undefined;
@@ -1505,6 +1570,10 @@ export interface ColumnKitApi {
     checkForUpdate(now?: number, fetch?: FetchRelease): Promise<void>;
     /** Runs the download-and-verify step. Exposed so the checksum gate is testable. */
     installUpdate(update: UpdateDecision, download?: DownloadBytes): Promise<void>;
+    /** Saves the current geometry for this workspace, bypassing the debounce. */
+    rememberLayout(): Promise<void>;
+    /** Puts a remembered geometry back. Resolves false when it does not apply. */
+    restoreRememberedLayout(): Promise<boolean>;
     /** Extension subscription count. Exposed so the tests can watch for leaks. */
     subscriptionCount(): number;
 }
@@ -1541,7 +1610,10 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
     floorGuard = guard;
     context.subscriptions.push(
         { dispose: () => guard.dispose() },
-        vscode.window.tabGroups.onDidChangeTabGroups(() => guard.schedule()),
+        vscode.window.tabGroups.onDidChangeTabGroups(() => {
+            guard.schedule();
+            scheduleRemember(context);
+        }),
         // Tabs too, not just groups. The floor belongs to the pane a group is
         // showing, and opening one changes that without touching the group set:
         // opening Settings in a 300px column has VS Code clamp it to exactly
@@ -1556,6 +1628,11 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
         guard.setPolling(
             config().get<boolean>('watchWhileIdle', false) && vscode.window.state.focused
         );
+        if (!vscode.window.state.focused) {
+            // Leaving the window is the last moment the geometry is worth
+            // keeping, and it is the moment a sash drag has certainly finished.
+            scheduleRemember(context);
+        }
     };
     updatePolling();
 
@@ -1573,6 +1650,9 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
             }
         })
     );
+
+    // Before the guard's first pass, so the pass judges what was restored.
+    void restoreRememberedLayout(context).then(() => guard.schedule());
 
     // The grid is restored, and the active group set, before the extension host
     // exists, so no event ever describes the layout we start with. A window
@@ -1601,6 +1681,8 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
         checkForUpdate: (now?: number, fetch?: FetchRelease) => checkForUpdate(context, now, fetch),
         installUpdate: (update: UpdateDecision, download?: DownloadBytes) =>
             installUpdate(context, update, download),
+        rememberLayout: () => rememberLayout(context),
+        restoreRememberedLayout: () => restoreRememberedLayout(context),
         subscriptionCount: () => context.subscriptions.length
     };
 }

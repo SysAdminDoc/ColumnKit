@@ -46,6 +46,7 @@ If you would rather have the numbers as permanent buttons instead of a hover men
 | `columnkit.statusBarAlignment` | `left` | Which end of the status bar the buttons sit on. |
 | `columnkit.showEditorTitleButton` | `false` | Adds an `Even` icon to each editor group's title bar. Off by default, because a narrow column pushes it straight into the overflow menu where it stops being one click. |
 | `columnkit.checkForUpdates` | `true` | Asks GitHub once a day whether a newer release exists. See Updates below. Turn it off and ColumnKit makes no network requests at all. |
+| `columnkit.rememberLayout` | `false` | Keeps this workspace's column widths and puts them back when you reopen it. Saved with the editor width it was measured at, so a layout from a wide monitor won't be restored onto a laptop. Off by default, because VS Code usually restores the grid itself. |
 | `columnkit.remainderStrategy` | `even` | How the other columns share what's left when you set one column's width. `proportional` keeps their existing ratio instead of equalising them. |
 | `columnkit.watchWhileIdle` | `false` | Re-checks the widths every couple of seconds while the window has focus, which is the only way to catch a column you drag onto the minimum yourself. Off by default because it's a timer rather than a reaction to anything. |
 

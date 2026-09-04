@@ -129,6 +129,11 @@
           "default": true,
           "description": "%config.checkForUpdates%"
         },
+        "columnkit.rememberLayout": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.rememberLayout%"
+        },
         "columnkit.remainderStrategy": {
           "type": "string",
           "enum": [

@@ -94,6 +94,40 @@ export function isTopLevelLeaf(nodes: LayoutNode[], leafIndex: number): boolean 
     return siblingsOf(nodes, leafIndex) === nodes;
 }
 
+/** A geometry kept for a workspace, with what it was measured against. */
+export interface RememberedLayout {
+    /** Editor area width when it was saved. */
+    width: number;
+    /** Groups it was saved with. */
+    leafCount: number;
+    layout: EditorLayout;
+}
+
+/** Widths within this fraction of each other count as the same screen. */
+const WIDTH_TOLERANCE = 0.02;
+
+/**
+ * Whether a remembered geometry can be put back.
+ *
+ * A layout saved on a 3440px screen restores as something unusable on a laptop:
+ * columns land under their minimums and VS Code clamps them onto the exact width
+ * that arms the expand. The group count has to match too, because these are
+ * widths and nothing else; restoring a different shape would move editors.
+ */
+export function canRestore(
+    saved: RememberedLayout | undefined,
+    width: number | undefined,
+    leafCount: number
+): boolean {
+    if (!saved || width === undefined || saved.width <= 0) {
+        return false;
+    }
+    if (saved.leafCount !== leafCount) {
+        return false;
+    }
+    return Math.abs(width - saved.width) <= Math.max(8, saved.width * WIDTH_TOLERANCE);
+}
+
 /** How far above the floor a corrected column is placed. */
 export const CORRECTION_MARGIN = 24;
 

@@ -525,6 +525,45 @@ suite('FloorGuard', () => {
         assert.strictEqual(columnKit.floorGuard.polling, false, 'the timer outlived the setting');
     });
 
+    test('puts a remembered layout back, and only when asked to', async function () {
+        // CK-22. Stored per workspace against the width it was measured at.
+        this.timeout(30000);
+        const columnKit = await api();
+        const cfg = vscode.workspace.getConfiguration('columnkit');
+
+        const saved = await quietly(async () => {
+            const width = (await settle()).reduce((a, b) => a + b, 0);
+            assert.ok(width - 560 >= FLOOR, `editor area ${width} too narrow for this setup`);
+            await vscode.commands.executeCommand('vscode.setEditorLayout', {
+                orientation: 0,
+                groups: [{ size: width - 560 }, { size: 280 }, { size: 280 }]
+            });
+            return settle();
+        });
+
+        // With the setting off nothing is kept, so a restore has nothing to do.
+        assert.strictEqual(
+            await columnKit.restoreRememberedLayout(),
+            false,
+            'restored something while the setting was off'
+        );
+
+        await cfg.update('rememberLayout', true, vscode.ConfigurationTarget.Global);
+        try {
+            await columnKit.rememberLayout();
+
+            await vscode.commands.executeCommand('columnkit.even');
+            const evened = await settle();
+            assert.notDeepStrictEqual(evened, saved, 'the setup did not change anything');
+
+            assert.strictEqual(await columnKit.restoreRememberedLayout(), true);
+            assert.deepStrictEqual(await settle(), saved, 'the widths did not come back');
+        } finally {
+            await cfg.update('rememberLayout', undefined, vscode.ConfigurationTarget.Global);
+            await new Promise(resolve => setTimeout(resolve, 150));
+        }
+    });
+
     test('respects the autoCorrect setting', async () => {
         const cfg = vscode.workspace.getConfiguration('columnkit');
         await cfg.update('autoCorrect', false, vscode.ConfigurationTarget.Global);

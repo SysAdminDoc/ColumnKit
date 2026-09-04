@@ -4,6 +4,7 @@ import {
     DEFAULT_FLOOR,
     SETTINGS_FLOOR,
     LayoutHistory,
+    canRestore,
     correctFloor,
     evenSplit,
     floorRisk,
@@ -590,6 +591,44 @@ suite('evenSplit', () => {
             next.groups[0].groups?.reduce((sum, n) => sum + (n.size ?? 0), 0),
             400
         );
+    });
+});
+
+suite('canRestore', () => {
+    const saved = { width: 2752, leafCount: 3, layout: { orientation: 0 as const, groups: [] } };
+
+    test('restores onto the same screen', () => {
+        assert.strictEqual(canRestore(saved, 2752, 3), true);
+    });
+
+    test('tolerates a couple of percent, for a side bar that moved', () => {
+        assert.strictEqual(canRestore(saved, 2720, 3), true);
+        assert.strictEqual(canRestore(saved, 2790, 3), true);
+    });
+
+    test('refuses a screen it was not measured on', () => {
+        // CK-22. A geometry saved on a 3440px monitor lands every column under
+        // its minimum on a laptop, and VS Code then clamps them onto exactly
+        // the width that arms the expand.
+        assert.strictEqual(canRestore(saved, 1280, 3), false);
+        assert.strictEqual(canRestore(saved, 3800, 3), false);
+    });
+
+    test('refuses a different number of groups, which these widths cannot describe', () => {
+        assert.strictEqual(canRestore(saved, 2752, 2), false);
+        assert.strictEqual(canRestore(saved, 2752, 4), false);
+    });
+
+    test('refuses when there is nothing saved or nothing measured', () => {
+        assert.strictEqual(canRestore(undefined, 2752, 3), false);
+        assert.strictEqual(canRestore(saved, undefined, 3), false);
+        assert.strictEqual(canRestore({ ...saved, width: 0 }, 2752, 3), false);
+    });
+
+    test('keeps a small window usable, where two percent is only a few pixels', () => {
+        const narrow = { ...saved, width: 300 };
+        assert.strictEqual(canRestore(narrow, 306, 3), true);
+        assert.strictEqual(canRestore(narrow, 320, 3), false);
     });
 });
 

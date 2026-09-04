@@ -40,12 +40,24 @@ rem is. Verified when the file is present, reported when it is not.
 set "SUMS=%~dp0SHA256SUMS.txt"
 if not exist "%SUMS%" set "SUMS=%~dp0..\dist\SHA256SUMS.txt"
 
+rem Hashed with certutil, not PowerShell. Windows PowerShell cannot load its own
+rem Utility module when it inherits a PowerShell 7 PSModulePath, which is exactly
+rem what a pwsh terminal hands to a child cmd. Get-FileHash then does not resolve
+rem at all, ACTUAL stays empty, and a perfectly good download was reported as a
+rem checksum mismatch with nothing after "Got:". It worked from Explorer, where
+rem the environment is clean, so the failure looked intermittent. certutil ships
+rem with Windows and has no module path to inherit.
+rem
 rem `exit /b` from inside nested parentheses does not set the process exit code,
 rem so a mismatch reported the failure on screen and still exited 0. The jump
 rem leaves the block first and exits at the top level.
 if exist "%SUMS%" (
-    for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command ^
-        "(Get-FileHash -Algorithm SHA256 '%VSIX%').Hash.ToLower()"`) do set "ACTUAL=%%H"
+    for /f "skip=1 delims=" %%H in ('certutil -hashfile "%VSIX%" SHA256') do (
+        if not defined ACTUAL set "ACTUAL=%%H"
+    )
+    rem Older builds print the digest in groups separated by spaces.
+    set "ACTUAL=!ACTUAL: =!"
+    if not defined ACTUAL goto :nohash
     findstr /i /c:"!ACTUAL!" "%SUMS%" >nul
     if errorlevel 1 goto :badsum
     echo Checksum OK: !ACTUAL!
@@ -78,6 +90,14 @@ echo The status bar has to be visible, or there is nowhere for it to go.
 echo.
 pause
 exit /b 0
+
+:nohash
+echo [ERROR] Could not compute the SHA-256 of %VSIX%
+echo         certutil returned no hash, so the file was not verified.
+echo         Do not install it until you can check it yourself.
+echo.
+pause
+exit /b 1
 
 :badsum
 echo [ERROR] Checksum mismatch for %VSIX%

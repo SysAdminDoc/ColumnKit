@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- `install.cmd` no longer refuses a perfectly good download. Run from a PowerShell 7 terminal, the Windows PowerShell it called couldn't find `Get-FileHash`, so it came back with nothing and the script reported a checksum mismatch with an empty hash. Double-clicking from Explorer worked, which made it look intermittent. It uses `certutil` now, and if a hash can't be computed at all it says so instead of blaming the file.
 - Opening Keyboard Shortcuts, a Search editor, Welcome or the Extensions page in a narrow column no longer drags that column wider. All four are indistinguishable from Settings through the extension API, and only Settings is really held to a 500px minimum, so ColumnKit had been widening columns that were never at risk and moving a sash nobody touched. It now goes by the width the column actually has.
 - The update check now verifies what it downloads. It used to hand the release's download URL straight to the editor, and a sideloaded install is done with no hash or signature check of any kind, so whatever sat at the other end of that URL got installed. ColumnKit fetches the file itself, compares it against the checksum GitHub published for that asset, and refuses to install when they disagree. The URL also has to be a ColumnKit release download now, so a tampered reply cannot aim it at another host or at a local file.
 - A reply from GitHub that isn't a release no longer crashes the update check. A captive portal or a proxy error page served as JSON used to throw a type error into the extension host log.

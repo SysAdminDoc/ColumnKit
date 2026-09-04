@@ -13,7 +13,7 @@ import {
     maxColumns,
     measureEditorWidth
 } from './layout';
-import { Release, decide, shouldCheck } from './update';
+import { Release, UpdateDecision, decide, isRelease, shouldCheck } from './update';
 
 const CONFIG_SECTION = 'columnkit';
 
@@ -139,6 +139,83 @@ const SKIPPED_VERSION_KEY = 'update.skippedVersion';
 /** Requests actually issued. Read by the tests to prove silence when disabled. */
 let updateRequests = 0;
 
+/** GitHub rejects API requests that do not send one. */
+const USER_AGENT = 'ColumnKit-update-check';
+
+/** Release assets are served from a redirect to a storage host. */
+const MAX_REDIRECTS = 5;
+
+/** Room for a release body, which is JSON and small. */
+const MAX_BODY_BYTES = 1_000_000;
+
+/** Room for a `.vsix`, which is tens of kilobytes today. */
+const MAX_VSIX_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Body of an https GET, or undefined for any failure at all.
+ *
+ * Redirects are followed because a release download always is one, and every
+ * hop has to stay https. Following a redirect off GitHub is safe here only
+ * because the bytes are checked against the release's digest afterwards.
+ */
+async function httpsGet(
+    url: string,
+    limit: number,
+    redirectsLeft = MAX_REDIRECTS
+): Promise<Buffer | undefined> {
+    if (!url.startsWith('https://')) {
+        return undefined;
+    }
+    const https = await import('node:https');
+    return new Promise<Buffer | undefined>(resolve => {
+        const request = https.get(
+            url,
+            {
+                headers: { 'User-Agent': USER_AGENT, Accept: 'application/vnd.github+json' },
+                timeout: 30000
+            },
+            response => {
+                const status = response.statusCode ?? 0;
+                const location = response.headers.location;
+                if (status >= 300 && status < 400 && location) {
+                    response.resume();
+                    if (redirectsLeft <= 0) {
+                        resolve(undefined);
+                        return;
+                    }
+                    resolve(httpsGet(new URL(location, url).toString(), limit, redirectsLeft - 1));
+                    return;
+                }
+                if (status !== 200) {
+                    log?.debug(`update request: HTTP ${status}`);
+                    response.resume();
+                    resolve(undefined);
+                    return;
+                }
+                const chunks: Buffer[] = [];
+                let size = 0;
+                response.on('data', (chunk: Buffer) => {
+                    size += chunk.length;
+                    // A hostile or broken response must not grow without bound
+                    // inside the extension host.
+                    if (size > limit) {
+                        request.destroy();
+                        resolve(undefined);
+                        return;
+                    }
+                    chunks.push(chunk);
+                });
+                response.on('end', () => resolve(Buffer.concat(chunks)));
+            }
+        );
+        request.on('timeout', () => request.destroy());
+        request.on('error', error => {
+            log?.debug(`update request failed: ${error.message}`);
+            resolve(undefined);
+        });
+    });
+}
+
 /**
  * Fetches the latest release, or undefined for any failure at all.
  *
@@ -147,51 +224,71 @@ let updateRequests = 0;
  */
 async function fetchLatestRelease(): Promise<Release | undefined> {
     updateRequests++;
-    const https = await import('node:https');
-    return new Promise<Release | undefined>(resolve => {
-        const request = https.get(
-            RELEASES_API,
-            {
-                headers: {
-                    // GitHub rejects requests without one.
-                    'User-Agent': 'ColumnKit-update-check',
-                    Accept: 'application/vnd.github+json'
-                },
-                timeout: 10000
-            },
-            response => {
-                if (response.statusCode !== 200) {
-                    log?.debug(`update check: HTTP ${response.statusCode}`);
-                    response.resume();
-                    resolve(undefined);
-                    return;
-                }
-                let body = '';
-                response.setEncoding('utf8');
-                response.on('data', chunk => {
-                    body += chunk;
-                    // A malformed or hostile response should not be able to grow
-                    // without bound in the extension host.
-                    if (body.length > 1_000_000) {
-                        request.destroy();
-                        resolve(undefined);
-                    }
-                });
-                response.on('end', () => {
-                    try {
-                        resolve(JSON.parse(body) as Release);
-                    } catch {
-                        resolve(undefined);
-                    }
-                });
-            }
+    const body = await httpsGet(RELEASES_API, MAX_BODY_BYTES);
+    if (!body) {
+        return undefined;
+    }
+    try {
+        const parsed: unknown = JSON.parse(body.toString('utf8'));
+        return isRelease(parsed) ? parsed : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/** Injected by the tests so no test run reaches GitHub. */
+export type FetchRelease = () => Promise<Release | undefined>;
+
+/** Injected the same way, so the checksum gate can be exercised offline. */
+export type DownloadBytes = (url: string, limit: number) => Promise<Buffer | undefined>;
+
+/**
+ * Downloads the asset, checks it against the digest the release published, and
+ * installs it only if they agree.
+ *
+ * Handing the URL straight to `workbench.extensions.installExtension` installs
+ * whatever is at the other end: the URI branch of that command downloads and
+ * installs with no hash or signature check, and sideloaded VSIX installs skip
+ * signature verification entirely.
+ */
+async function installUpdate(
+    context: vscode.ExtensionContext,
+    update: UpdateDecision,
+    download: DownloadBytes = httpsGet
+): Promise<void> {
+    const asset = update.asset;
+    if (!asset) {
+        return;
+    }
+    const bytes = await download(asset.url, MAX_VSIX_BYTES);
+    if (!bytes) {
+        notify('ColumnKit: the update could not be downloaded.', 4000);
+        return;
+    }
+    const crypto = await import('node:crypto');
+    const actual = crypto.createHash('sha256').update(bytes).digest('hex');
+    if (actual !== asset.sha256) {
+        log?.warn(`update rejected: expected ${asset.sha256}, got ${actual}`);
+        notify(
+            'ColumnKit: the downloaded update did not match its checksum, so it was not installed.',
+            6000
         );
-        request.on('timeout', () => request.destroy());
-        request.on('error', error => {
-            log?.debug(`update check failed: ${error.message}`);
-            resolve(undefined);
-        });
-    });
+        return;
+    }
+
+    await vscode.workspace.fs.createDirectory(context.globalStorageUri);
+    const file = vscode.Uri.joinPath(context.globalStorageUri, `columnkit-${update.version}.vsix`);
+    await vscode.workspace.fs.writeFile(file, bytes);
+    try {
+        await vscode.commands.executeCommand('workbench.extensions.installExtension', file);
+    } finally {
+        // Best effort. A leftover file is harmless; failing the install is not.
+        try {
+            await vscode.workspace.fs.delete(file);
+        } catch {
+            log?.debug('could not remove the downloaded update');
+        }
+    }
 }
 
 /**
@@ -201,7 +298,11 @@ async function fetchLatestRelease(): Promise<Release | undefined> {
  * something behind their back. The prompt is an offer rather than a
  * confirmation of an action they already took.
  */
-async function checkForUpdate(context: vscode.ExtensionContext, now = Date.now()): Promise<void> {
+async function checkForUpdate(
+    context: vscode.ExtensionContext,
+    now = Date.now(),
+    fetch: FetchRelease = fetchLatestRelease
+): Promise<void> {
     if (!config().get<boolean>('checkForUpdates', true)) {
         return;
     }
@@ -209,32 +310,43 @@ async function checkForUpdate(context: vscode.ExtensionContext, now = Date.now()
     if (!shouldCheck(lastCheckedAt, now)) {
         return;
     }
-    await context.globalState.update(LAST_CHECKED_KEY, now);
 
-    const release = await fetchLatestRelease();
-    const current = context.extension.packageJSON.version as string;
-    const update = decide(current, release, context.globalState.get<string>(SKIPPED_VERSION_KEY));
-    if (!update) {
-        log?.debug(`update check: ${current} is current`);
-        return;
-    }
+    try {
+        const release = await fetch();
+        if (!release) {
+            // Deliberately not recorded. Spending the daily slot on a check that
+            // never reached GitHub means one offline start silences the feature
+            // for a day; a failure retries on the next activation instead.
+            log?.debug('update check: no usable release, will retry');
+            return;
+        }
+        await context.globalState.update(LAST_CHECKED_KEY, now);
 
-    log?.info(`update available: ${update.version}`);
-    const install = update.asset ? 'Update' : undefined;
-    const choice = await vscode.window.showInformationMessage(
-        `ColumnKit ${update.version} is available. You have ${current}.`,
-        ...[install, 'Release notes', 'Skip this version'].filter((x): x is string => !!x)
-    );
+        const current = context.extension.packageJSON.version as string;
+        const update = decide(current, release, context.globalState.get<string>(SKIPPED_VERSION_KEY));
+        if (!update) {
+            log?.debug(`update check: ${current} is current`);
+            return;
+        }
 
-    if (choice === 'Update' && update.asset) {
-        await vscode.commands.executeCommand(
-            'workbench.extensions.installExtension',
-            vscode.Uri.parse(update.asset.url)
+        log?.info(`update available: ${update.version}`);
+        const install = update.asset ? 'Update' : undefined;
+        const choice = await vscode.window.showInformationMessage(
+            `ColumnKit ${update.version} is available. You have ${current}.`,
+            ...[install, 'Release notes', 'Skip this version'].filter((x): x is string => !!x)
         );
-    } else if (choice === 'Release notes') {
-        await vscode.env.openExternal(vscode.Uri.parse(update.release.html_url));
-    } else if (choice === 'Skip this version') {
-        await context.globalState.update(SKIPPED_VERSION_KEY, update.version);
+
+        if (choice === 'Update') {
+            await installUpdate(context, update);
+        } else if (choice === 'Release notes') {
+            await vscode.env.openExternal(vscode.Uri.parse(update.release.html_url));
+        } else if (choice === 'Skip this version') {
+            await context.globalState.update(SKIPPED_VERSION_KEY, update.version);
+        }
+    } catch (error) {
+        // Fire and forget from activate(), so an escape here lands as an
+        // unhandled rejection in the host log and the promise never settles.
+        log?.debug(`update check failed: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
 
@@ -316,15 +428,16 @@ function forgetIfRecorded(recorded: EditorLayout | undefined): void {
 
 async function evenColumns(): Promise<void> {
     const recorded = await remember();
-    floorGuard?.suspendFor(UNDO_SETTLE_MS);
+    floorGuard?.beginHold();
     try {
         await vscode.commands.executeCommand('workbench.action.evenEditorWidths');
     } catch {
         forgetIfRecorded(recorded);
         notify('ColumnKit: could not even out the columns.', 3000);
         return;
+    } finally {
+        floorGuard?.endHold(UNDO_SETTLE_MS);
     }
-    floorGuard?.suspendFor(UNDO_SETTLE_MS);
 }
 
 /** Focuses the group at 1-based grid position `column`. */
@@ -409,44 +522,44 @@ async function undoLayout(): Promise<void> {
         return;
     }
     // The restored geometry is the user's own, and it may legitimately hold a
-    // group on the floor. Stand the guard down first, or its correction would
-    // undo the undo.
-    floorGuard?.suspendFor(UNDO_SETTLE_MS);
+    // group on the floor. Stand the guard down for the whole restore, or its
+    // correction would undo the undo. Held rather than timed, because moving
+    // tabs back can outlast any deadline.
+    floorGuard?.beginHold();
     try {
-        await vscode.commands.executeCommand('vscode.setEditorLayout', previous.layout);
-    } catch {
-        // The entry was already off the ring. Put it back rather than losing a
-        // step to a write that never landed, and do not claim a restore.
-        history.record(previous);
-        notify('ColumnKit: could not restore the layout.', 3000);
-        return;
-    }
-    // Re-arm from the moment the write actually landed. The window opened above
-    // has been funding the write's own round-trip, and the tab-group event it
-    // produces does not arrive until afterwards.
-    floorGuard?.suspendFor(UNDO_SETTLE_MS);
-
-    let stranded = 0;
-    if (previous.tabs) {
-        const columns = leaves(previous.layout.groups).length;
         try {
-            stranded = await restoreTabs(previous.tabs, columns);
+            await vscode.commands.executeCommand('vscode.setEditorLayout', previous.layout);
         } catch {
-            // A failed move must not cost the geometry that already landed.
-            stranded = previous.tabs.length;
+            // The entry was already off the ring. Put it back rather than losing
+            // a step to a write that never landed, and do not claim a restore.
+            history.record(previous);
+            notify('ColumnKit: could not restore the layout.', 3000);
+            return;
         }
-        // Every move fires tab events of its own, so the guard has to stay down
-        // until after the last one rather than from the geometry write.
-        floorGuard?.suspendFor(UNDO_SETTLE_MS);
-        log?.trace(`undo moved tabs back into ${columns} columns, ${stranded} stranded`);
-    }
 
-    notify(
-        stranded === 0
-            ? 'ColumnKit: layout restored.'
-            : `ColumnKit: layout restored, but ${stranded} tab${stranded === 1 ? '' : 's'} could not be moved back.`,
-        3000
-    );
+        let stranded = 0;
+        if (previous.tabs) {
+            const columns = leaves(previous.layout.groups).length;
+            try {
+                stranded = await restoreTabs(previous.tabs, columns);
+            } catch {
+                // A failed move must not cost the geometry that already landed.
+                stranded = previous.tabs.length;
+            }
+            log?.trace(`undo moved tabs back into ${columns} columns, ${stranded} stranded`);
+        }
+
+        notify(
+            stranded === 0
+                ? 'ColumnKit: layout restored.'
+                : `ColumnKit: layout restored, but ${stranded} tab${stranded === 1 ? '' : 's'} could not be moved back.`,
+            3000
+        );
+    } finally {
+        // The tail covers the events the writes produce, which arrive after the
+        // commands that caused them have resolved.
+        floorGuard?.endHold(UNDO_SETTLE_MS);
+    }
 }
 
 async function setColumns(columns: number): Promise<void> {
@@ -485,21 +598,25 @@ async function setColumns(columns: number): Promise<void> {
     // Hold the guard off across the write. Both paths read the layout and then
     // write a new one, and a correction landing in that gap would be computed
     // from the group count we are in the middle of replacing.
-    floorGuard?.suspendFor(UNDO_SETTLE_MS);
+    floorGuard?.beginHold();
+    let applied: EditorLayout | undefined;
     try {
-        await vscode.commands.executeCommand('vscode.setEditorLayout', layout);
-    } catch {
-        // Nothing changed, so the entry recorded above would be a phantom step.
-        forgetIfRecorded(previous);
-        notify('ColumnKit: could not change the column count.', 3000);
-        return;
-    }
-    floorGuard?.suspendFor(UNDO_SETTLE_MS);
+        try {
+            await vscode.commands.executeCommand('vscode.setEditorLayout', layout);
+        } catch {
+            // Nothing changed, so the entry recorded above would be a phantom step.
+            forgetIfRecorded(previous);
+            notify('ColumnKit: could not change the column count.', 3000);
+            return;
+        }
 
-    // Report what the editor actually did, not what was asked for. A merge can
-    // be refused and a count can come back different; describing the request
-    // would make the message a guess.
-    const applied = await readLayout();
+        // Report what the editor actually did, not what was asked for. A merge
+        // can be refused and a count can come back different; describing the
+        // request would make the message a guess.
+        applied = await readLayout();
+    } finally {
+        floorGuard?.endHold(UNDO_SETTLE_MS);
+    }
     const after = applied ? leaves(applied.groups).length : wanted;
     log?.trace(`column count ${before} -> ${after} (requested ${columns}, wrote ${wanted})`);
 
@@ -717,6 +834,29 @@ class FloorGuard {
     /** Wall-clock deadline before which no correction runs. */
     private suspendedUntil = 0;
 
+    /** Operations in progress that must not be corrected part-way through. */
+    private holds = 0;
+
+    /**
+     * Holds corrections off for the whole of an operation, however long it
+     * takes.
+     *
+     * A deadline alone is a bet that the operation finishes inside it. Undo now
+     * writes the geometry and then moves tabs back, and once that ran past the
+     * window a correction landed on the layout the user had just restored. The
+     * count covers the operation and the deadline covers the events it leaves
+     * behind, which arrive after it returns.
+     */
+    beginHold(): void {
+        this.holds++;
+    }
+
+    /** Ends one hold and leaves `ms` of tail for the events the write produced. */
+    endHold(ms: number): void {
+        this.holds = Math.max(0, this.holds - 1);
+        this.suspendFor(ms);
+    }
+
     /** Holds corrections off while a deliberate layout write settles. */
     suspendFor(ms: number): void {
         this.suspendedUntil = Date.now() + ms;
@@ -724,11 +864,12 @@ class FloorGuard {
 
     /** Ends a suspension early. The window is global, so tests must clear it. */
     resume(): void {
+        this.holds = 0;
         this.suspendedUntil = 0;
     }
 
     private get suspended(): boolean {
-        return Date.now() < this.suspendedUntil;
+        return this.holds > 0 || Date.now() < this.suspendedUntil;
     }
 
     schedule(): void {
@@ -742,7 +883,9 @@ class FloorGuard {
         // early here would discard the only notification we get, and nothing
         // re-arms when the deadline lapses, so a group floored during an undo
         // would stay armed until some later, unrelated tab-group change.
-        const held = Math.max(0, this.suspendedUntil - Date.now());
+        // A hold has no deadline to wait out, so poll at the debounce interval
+        // until it lifts. correctOnce re-schedules while it is still held.
+        const held = this.holds > 0 ? 0 : Math.max(0, this.suspendedUntil - Date.now());
         this.timer = setTimeout(() => void this.run(), held + AUTO_CORRECT_DEBOUNCE_MS);
     }
 
@@ -865,8 +1008,10 @@ export interface ColumnKitApi {
     activationMs: number;
     /** Update requests actually issued, so a test can prove none were. */
     updateRequests(): number;
-    /** Runs the update check now, bypassing nothing else. */
-    checkForUpdate(now?: number): Promise<void>;
+    /** Runs the update check now. The fetch is injectable so no test hits GitHub. */
+    checkForUpdate(now?: number, fetch?: FetchRelease): Promise<void>;
+    /** Runs the download-and-verify step. Exposed so the checksum gate is testable. */
+    installUpdate(update: UpdateDecision, download?: DownloadBytes): Promise<void>;
     /** Extension subscription count. Exposed so the tests can watch for leaks. */
     subscriptionCount(): number;
 }
@@ -929,7 +1074,9 @@ export function activate(context: vscode.ExtensionContext): ColumnKitApi {
         activationMs,
         lastNotification: () => lastNotification,
         updateRequests: () => updateRequests,
-        checkForUpdate: (now?: number) => checkForUpdate(context, now),
+        checkForUpdate: (now?: number, fetch?: FetchRelease) => checkForUpdate(context, now, fetch),
+        installUpdate: (update: UpdateDecision, download?: DownloadBytes) =>
+            installUpdate(context, update, download),
         subscriptionCount: () => context.subscriptions.length
     };
 }

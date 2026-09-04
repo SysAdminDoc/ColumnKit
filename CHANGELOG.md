@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- The update check now verifies what it downloads. It used to hand the release's download URL straight to the editor, and a sideloaded install is done with no hash or signature check of any kind, so whatever sat at the other end of that URL got installed. ColumnKit fetches the file itself, compares it against the checksum GitHub published for that asset, and refuses to install when they disagree. The URL also has to be a ColumnKit release download now, so a tampered reply cannot aim it at another host or at a local file.
+- A reply from GitHub that isn't a release no longer crashes the update check. A captive portal or a proxy error page served as JSON used to throw a type error into the extension host log.
+- A failed update check retries on the next window instead of using up the day's one check. Starting offline used to silence the feature for 24 hours.
 - Undo now puts merged tabs back in the columns they came from. It used to restore the column widths only, so undoing a merge handed back the empty columns with every merged tab still piled into one of them, which is the arrangement undo is there to recover.
 - Nothing ColumnKit said was reaching screen reader users. VS Code marks the status bar as a non-announcing region, so every message went unheard. With screen reader mode on, outcomes are now delivered as a plain notification instead. There are no buttons on it, so it is still a toast and not a prompt.
 - Asking for more columns than the window can hold no longer parks every one of them on the minimum width, which is the exact state that makes columns expand on click. The count is capped at what fits and the message says so.

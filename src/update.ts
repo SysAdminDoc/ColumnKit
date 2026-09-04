@@ -5,8 +5,8 @@
  * ColumnKit ships nowhere else, so without this nobody ever receives a fix.
  *
  * Kept free of the vscode module so the comparison and scheduling rules can be
- * unit-tested, and the one network call is injected so no test ever reaches
- * GitHub.
+ * unit-tested. The network call itself lives in extension.ts and is injectable,
+ * so no test ever reaches GitHub.
  */
 
 /** Once a day. Often enough to matter, rare enough not to be rude. */
@@ -23,6 +23,50 @@ export interface Release {
     tag_name: string;
     html_url: string;
     assets: ReleaseAsset[];
+}
+
+/**
+ * Where a release asset has to live before the update path will touch it.
+ *
+ * The URL arrives in the same JSON body as everything else, so pinning it does
+ * not defend against whoever controls that body. What it does stop is the body
+ * steering a download at some unrelated host, or at a `file:` path on this
+ * machine, which is a much larger surface than the one release page.
+ */
+export const ASSET_PREFIX = 'https://github.com/SysAdminDoc/ColumnKit/releases/download/';
+
+/** Where the Release notes button is allowed to send a browser. */
+export const RELEASE_PREFIX = 'https://github.com/SysAdminDoc/ColumnKit/';
+
+/**
+ * Whether a parsed response really is a release.
+ *
+ * Any 200 whose body is not the shape we expect used to reach `tag_name.trim()`
+ * and throw. A captive portal, a proxy error page served as JSON, an API change
+ * and an empty array all land here.
+ */
+export function isRelease(value: unknown): value is Release {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return false;
+    }
+    const release = value as Record<string, unknown>;
+    if (typeof release.tag_name !== 'string' || typeof release.html_url !== 'string') {
+        return false;
+    }
+    if (!Array.isArray(release.assets)) {
+        return false;
+    }
+    return release.assets.every(entry => {
+        if (typeof entry !== 'object' || entry === null) {
+            return false;
+        }
+        const asset = entry as Record<string, unknown>;
+        return (
+            typeof asset.name === 'string' &&
+            typeof asset.browser_download_url === 'string' &&
+            (asset.digest === undefined || asset.digest === null || typeof asset.digest === 'string')
+        );
+    });
 }
 
 export function shouldCheck(lastCheckedAt: number | undefined, now: number): boolean {
@@ -78,14 +122,16 @@ export interface UpdateAsset {
 }
 
 /**
- * The `.vsix` in a release, but only when GitHub published a digest for it.
+ * The `.vsix` in a release, but only when it comes from this repository's
+ * release downloads and GitHub published a digest for it.
  *
- * Without a digest there is nothing to check a download against, and installing
- * an unverified binary is worse than telling the user to fetch it themselves.
+ * The digest is what the downloaded bytes are checked against before anything
+ * is installed. Without one there is nothing to check, so the update is offered
+ * as a link instead of a one-click install.
  */
 export function pickVsix(release: Release): UpdateAsset | undefined {
     const asset = release.assets.find(a => a.name.toLowerCase().endsWith('.vsix'));
-    if (!asset) {
+    if (!asset || !asset.browser_download_url.startsWith(ASSET_PREFIX)) {
         return undefined;
     }
     const digest = asset.digest ?? '';
@@ -111,10 +157,14 @@ export interface UpdateDecision {
  */
 export function decide(
     currentVersion: string,
-    release: Release | undefined,
+    release: unknown,
     skippedVersion: string | undefined
 ): UpdateDecision | undefined {
-    if (!release) {
+    if (!isRelease(release)) {
+        return undefined;
+    }
+    if (!release.html_url.startsWith(RELEASE_PREFIX)) {
+        // The notes button opens this in a browser, so it is pinned too.
         return undefined;
     }
     const version = release.tag_name.trim().replace(/^v/i, '');

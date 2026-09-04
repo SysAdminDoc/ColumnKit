@@ -1308,52 +1308,105 @@ async function pickColumnWidth(percent?: number): Promise<void> {
     }
 }
 
+export interface ColumnPickItem extends vscode.QuickPickItem {
+    /** The count this item applies, absent on the separator and the undo entry. */
+    columns?: number;
+    undo?: boolean;
+}
+
+/**
+ * The picker's contents.
+ *
+ * Split out so the ordering and the wording can be asserted without driving a
+ * quick pick, which needs a person to accept it.
+ *
+ * `fits` is the largest count that stays clear of the floors, or undefined when
+ * the width is unknown. Counts past it are still offered, because the cap and
+ * its message still apply if one is chosen, but saying so up front beats letting
+ * someone pick 9 and be told afterwards.
+ */
+export function buildColumnPickItems(
+    current: number,
+    fits: number | undefined,
+    steps: number
+): ColumnPickItem[] {
+    const items: ColumnPickItem[] = [];
+    for (let n = 1; n <= 12; n++) {
+        let detail: string;
+        if (n === current) {
+            detail = vscode.l10n.t('Current layout. Picking this evens the widths.');
+        } else if (fits !== undefined && n > fits) {
+            detail = vscode.l10n.t('Will not fit above the minimum width in this window.');
+        } else if (n < current) {
+            detail = vscode.l10n.t('Merges {0} into the last one.', plural(current - n, ...COLUMNS));
+        } else {
+            detail = vscode.l10n.t('Adds {0}.', plural(n - current, ...EMPTY_COLUMNS));
+        }
+        items.push({
+            label: `${n}`,
+            description: n === 1 ? vscode.l10n.t('column') : vscode.l10n.t('columns'),
+            detail,
+            columns: n
+        });
+    }
+
+    // Last, and behind a separator. As the first item it was preselected, so
+    // opening the picker and pressing Enter undid a layout change instead of
+    // choosing a count.
+    if (steps > 0) {
+        items.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
+        items.push({
+            label: '$(discard) ' + vscode.l10n.t('Undo the last ColumnKit change'),
+            description: vscode.l10n.t('{0} available', plural(steps, '{0} step', '{0} steps')),
+            undo: true
+        });
+    }
+    return items;
+}
+
 async function pickColumns(): Promise<void> {
     // From the layout, not tabGroups.all: the picker describes what a write
     // would do, and a write only ever touches the active editor part.
     const layout = await readLayout();
     const current = layout ? leaves(layout.groups).length : currentColumnCount();
-    const items: vscode.QuickPickItem[] = [];
+    const fits = maxColumns(
+        layout && measureEditorWidth(layout, DEFAULT_FLOOR),
+        currentFloors(layout),
+        DEFAULT_FLOOR
+    );
+    const items = buildColumnPickItems(current, fits, history.size);
 
-    for (let n = 1; n <= 12; n++) {
-        items.push({
-            label: `${n}`,
-            description: n === 1 ? vscode.l10n.t('column') : vscode.l10n.t('columns'),
-            detail:
-                n === current
-                    ? vscode.l10n.t('Current layout. Picking this evens the widths.')
-                    : n < current
-                        ? vscode.l10n.t('Merges {0} into the last one.', plural(current - n, ...COLUMNS))
-                        : vscode.l10n.t('Adds {0}.', plural(n - current, ...EMPTY_COLUMNS))
+    // createQuickPick rather than showQuickPick, so the count you already have
+    // starts selected instead of whatever happens to be at the top.
+    const pick = vscode.window.createQuickPick<ColumnPickItem>();
+    let choice: ColumnPickItem | undefined;
+    try {
+        pick.title = 'ColumnKit';
+        pick.placeholder = vscode.l10n.t('Column count (currently {0})', current);
+        pick.items = items;
+        const active = items.find(item => item.columns === current);
+        if (active) {
+            pick.activeItems = [active];
+        }
+        choice = await new Promise<ColumnPickItem | undefined>(resolve => {
+            pick.onDidAccept(() => resolve(pick.selectedItems[0]));
+            pick.onDidHide(() => resolve(undefined));
+            pick.show();
         });
+    } finally {
+        pick.dispose();
     }
-
-    // Reached from the status bar picker so undo has an affordance without
-    // adding another permanent status bar item.
-    const UNDO = '$(discard) ' + vscode.l10n.t('Undo the last ColumnKit change');
-    if (history.size > 0) {
-        items.unshift({
-            label: UNDO,
-            description: vscode.l10n.t(
-                '{0} available',
-                plural(history.size, '{0} step', '{0} steps')
-            )
-        });
-    }
-
-    const choice = await vscode.window.showQuickPick(items, {
-        title: 'ColumnKit',
-        placeHolder: vscode.l10n.t('Column count (currently {0})', current)
-    });
 
     if (!choice) {
         return;
     }
-    if (choice.label === UNDO) {
+    if (choice.undo) {
         await undoLayout();
         return;
     }
-    await setColumns(Number(choice.label));
+    if (choice.columns !== undefined) {
+        await setColumns(choice.columns);
+    }
 }
 
 class StatusBar {

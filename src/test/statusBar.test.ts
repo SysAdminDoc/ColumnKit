@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import type { ColumnKitApi } from '../extension';
+import { buildColumnPickItems } from '../extension';
 
 /**
  * CK-7. Status bar text is announced literally, so `$(split-horizontal) Even`
@@ -124,6 +125,63 @@ suite('status bar accessibility', () => {
         const names = (await api()).statusBar.contributed.map(i => i.name);
         assert.ok(names.length > 0, 'no items to check');
         assert.strictEqual(new Set(names).size, names.length, `duplicate names: ${names.join(', ')}`);
+    });
+});
+
+suite('column picker', () => {
+    // CK-49. The items are built separately from the quick pick so they can be
+    // asserted without a person accepting one.
+
+    test('offers every count from 1 to 12', () => {
+        const counts = buildColumnPickItems(3, 12, 0)
+            .filter(item => item.columns !== undefined)
+            .map(item => item.columns);
+        assert.deepStrictEqual(counts, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    });
+
+    test('says which counts will not fit, rather than waiting to be told', () => {
+        const items = buildColumnPickItems(3, 3, 0);
+        for (const item of items) {
+            const fits = (item.columns ?? 0) <= 3;
+            assert.strictEqual(
+                /will not fit/i.test(item.detail ?? ''),
+                !fits,
+                `count ${item.columns} said: ${item.detail}`
+            );
+        }
+    });
+
+    test('says nothing about fitting when the width is unknown', () => {
+        for (const item of buildColumnPickItems(3, undefined, 0)) {
+            assert.doesNotMatch(item.detail ?? '', /will not fit/i);
+        }
+    });
+
+    test('describes a merge and an addition from where you are', () => {
+        const items = buildColumnPickItems(4, 12, 0);
+        assert.match(items[1].detail ?? '', /Merges 2 columns/);
+        assert.match(items[3].detail ?? '', /Current layout/);
+        assert.match(items[4].detail ?? '', /Adds 1 empty column\./);
+    });
+
+    test('puts undo last, behind a separator', () => {
+        // As the first item it was preselected, so opening the picker and
+        // pressing Enter undid a layout change instead of choosing a count.
+        const items = buildColumnPickItems(3, 12, 2);
+        assert.strictEqual(items[items.length - 1].undo, true);
+        assert.strictEqual(
+            items[items.length - 2].kind,
+            vscode.QuickPickItemKind.Separator,
+            'the undo entry should be separated from the counts'
+        );
+        assert.match(items[items.length - 1].description ?? '', /2 steps/);
+        assert.strictEqual(items[0].columns, 1, 'the counts should still lead');
+    });
+
+    test('leaves undo out when there is nothing to undo', () => {
+        const items = buildColumnPickItems(3, 12, 0);
+        assert.strictEqual(items.length, 12);
+        assert.ok(!items.some(item => item.undo));
     });
 });
 

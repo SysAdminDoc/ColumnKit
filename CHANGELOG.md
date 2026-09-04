@@ -7,7 +7,7 @@
 - A reply from GitHub that isn't a release no longer crashes the update check. A captive portal or a proxy error page served as JSON used to throw a type error into the extension host log.
 - A failed update check retries on the next window instead of using up the day's one check. Starting offline used to silence the feature for 24 hours.
 - Undo now puts merged tabs back in the columns they came from. It used to restore the column widths only, so undoing a merge handed back the empty columns with every merged tab still piled into one of them, which is the arrangement undo is there to recover.
-- Nothing ColumnKit said was reaching screen reader users. VS Code marks the status bar as a non-announcing region, so every message went unheard. With screen reader mode on, outcomes are now delivered as a plain notification instead. There are no buttons on it, so it is still a toast and not a prompt.
+- Nothing ColumnKit said was reaching screen reader users. VS Code marks the status bar as a non-announcing region, so every message went unheard. Outcomes now go to a plain notification instead whenever `editor.accessibilitySupport` is set to `on`. It has to be that explicitly; the default `auto` tells an extension nothing. There are no buttons on the notification, so it's still a toast and not a prompt.
 - Asking for more columns than the window can hold no longer parks every one of them on the minimum width, which is the exact state that makes columns expand on click. The count is capped at what fits and the message says so.
 - The message after a column change reports what the editor actually did rather than what was asked for, and counts only the window it wrote to. With a floating window open it used to count the groups in both.
 - Changing a ColumnKit setting used to leak a handle on every rebuild of the status bar buttons, so the list grew for as long as the window stayed open.
@@ -17,21 +17,22 @@
 - `RESEARCH.md` and `ROADMAP.md` were being packaged into the published `.vsix`. They are now excluded.
 
 ### Added
-- `install.cmd` and `SHA256SUMS.txt` ship with the release. Double-clicking a .vsix on Windows hands it to Visual Studio's installer, which rejects it; the script checks the download against the checksum and installs it properly into whichever VS Code family editors you have.
+- The floor guard. VS Code expands an editor group the moment you click into it if that group's width is exactly its minimum, and there's no setting anywhere that turns it off. ColumnKit keeps every column clear of that width so the expand never has anything to fire on. `columnkit.autoCorrect` switches it off.
+- Layout undo. `ColumnKit: Undo Layout Change` puts back the geometry from before the last column change and moves any merged tabs back to the columns they came from. The picker offers it too. Automatic floor corrections are left out of the history, so undo always lands on something you did.
+- A daily update check, because VS Code never auto-updates an extension installed from a `.vsix`. It offers the release notes, an install or a skip. An install is checked against the checksum GitHub publishes for the file. `columnkit.checkForUpdates` turns the whole thing off, and then ColumnKit makes no network requests at all.
+- `install.cmd` and `SHA256SUMS.txt` are built alongside the `.vsix` and attached to the release. Double-clicking a .vsix on Windows hands it to Visual Studio's installer, which rejects it. The script checks the download against the checksum and installs it into whichever VS Code family editors you have.
 - A `ColumnKit` output channel. Automatic corrections are logged at trace level with the widths before and after, so a misfire leaves a record instead of vanishing. Raise the level with `Developer: Set Log Level`.
 - An icon, so the extension is recognisable in the Extensions view.
 - `extensionKind: ["ui"]`, so a Remote SSH, WSL or Codespaces window stops installing and running this on the remote host when it only ever touches local window layout. Virtual workspaces are declared supported for the same reason.
-
-### Removed
-- The `columnkit.minGroupWidth` setting. The minimum is a property of the pane in the column, not a number you can pick, so it is now read per column instead of configured.
+- Support for untrusted workspaces. ColumnKit reads no workspace content, so being disabled in Restricted Mode was a pure loss.
+- Extension test suite (`npm test`), with a probe that pins down how `vscode.getEditorLayout` denominates group sizes.
 
 ### Changed
 - The Settings editor asks for a 500px minimum rather than the usual 220, so it was expanding on click even with the guard on. Each column is now measured against the floor its own pane asks for.
 - ColumnKit now adds one status bar button instead of five. Clicking it still evens the columns; hovering it gives you the column-count presets, the picker and undo, each a single click. Set `columnkit.statusBarPresets` to get the numbered buttons back as permanent items.
 
-### Added
-- Layout undo. `ColumnKit: Undo Layout Change` puts back the geometry from before the last column change, and the picker offers it too. Automatic floor corrections are left out of the history, so undo always lands on something you did.
-- Extension test suite (`npm test`), with a probe that pins down how `vscode.getEditorLayout` denominates group sizes.
+### Removed
+- The `columnkit.minGroupWidth` setting. The minimum is a property of the pane in the column, not a number you can pick, so it is now read per column instead of configured.
 
 ## 0.1.0 - 2026-09-03
 

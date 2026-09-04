@@ -29,7 +29,9 @@ Clicking `Even` distributes width across every open column and leaves the column
 
 Hover it and you get the rest: jump straight to 2, 3, 4, 6 or 8 columns, pick any count from 1 to 12, or undo the last layout change. Each is a single click.
 
-The numbered actions change how many columns exist. Ask for fewer than you have open and the surplus columns' tabs get merged into the last one. Ask for more and you get empty columns. Nothing is closed and no editor is lost, but the arrangement does change, which is what undo is for.
+The numbered actions change how many columns exist. Ask for fewer than you have open and the surplus columns' tabs get merged into the last one. Ask for more and you get empty columns. Nothing is closed and no editor is lost, but the arrangement does change, which is what undo is for. Undo brings back the widths and moves the merged tabs back to the columns they came from.
+
+Ask for more columns than the window can hold and you get as many as actually fit. Splitting past that point puts every column on the minimum width, which is the exact thing that makes them expand when you click, so the count gets capped and the message tells you what you got.
 
 If you would rather have the numbers as permanent buttons instead of a hover menu, set `columnkit.statusBarPresets`.
 
@@ -37,10 +39,11 @@ If you would rather have the numbers as permanent buttons instead of a hover men
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `columnkit.autoCorrect` | `true` | Raises the active column clear of the 220px floor as it becomes active, so the expand-on-click never fires. Turn it off for stock behaviour. |
+| `columnkit.autoCorrect` | `true` | Raises every column that is sitting on its minimum width clear of it, so the expand-on-click never fires. It has to disarm all of them ahead of time, because by the time an extension hears that a group became active the editor has already expanded it. Turn it off for stock behaviour. |
 | `columnkit.statusBarPresets` | `[]` | Extra numbered buttons beside `Even`. Empty by default, because the same counts are one click away in the hover menu. Setting it also brings back the picker button. |
 | `columnkit.statusBarAlignment` | `left` | Which end of the status bar the buttons sit on. |
 | `columnkit.showEditorTitleButton` | `false` | Adds an `Even` icon to each editor group's title bar. Off by default, because a narrow column pushes it straight into the overflow menu where it stops being one click. |
+| `columnkit.checkForUpdates` | `true` | Asks GitHub once a day whether a newer release exists. See Updates below. Turn it off and ColumnKit makes no network requests at all. |
 
 ## Commands
 
@@ -49,7 +52,9 @@ Everything is in the palette under `ColumnKit`, if you'd rather type than click.
 - `ColumnKit: Even Out Columns`
 - `ColumnKit: Set Column Count...`
 - `ColumnKit: Undo Layout Change`
-- `ColumnKit: 2 Columns` through `ColumnKit: 8 Columns`
+- `ColumnKit: 2 Columns`, `3`, `4`, `5`, `6` and `8 Columns`
+
+Counts the palette doesn't list, up to 12, are in the picker.
 
 ## Build
 
@@ -69,9 +74,25 @@ Or do it yourself:
 code --install-extension dist/columnkit-*.vsix
 ```
 
+## Updates
+
+VS Code turns off auto-update for any extension installed from a `.vsix`, and that's the only way ColumnKit ships. Without something in the extension itself, you'd never hear about a fix.
+
+So once a day it asks GitHub's releases API whether there's a newer tag. That request sends a user agent string and nothing else: no telemetry, no identifiers, nothing about your editor or your files. If there's something newer you get a notification offering the release notes, an install, or a skip that sticks for that version.
+
+Choosing to install downloads the `.vsix`, checks it against the SHA-256 checksum GitHub publishes for that file, and stops if they don't match. A sideloaded install is never signature-checked by the editor, so that comparison is the only integrity check in the chain.
+
+Set `columnkit.checkForUpdates` to `false` and none of it happens. That's the only network request ColumnKit ever makes.
+
+## Other editors
+
+The forks all carry the same bug and the same two layout commands, and they read extensions from Open VSX rather than the Marketplace. ColumnKit isn't published to either yet, so the `.vsix` from the GitHub release is the install path everywhere. Anything built on VS Code 1.100 or newer should work: Cursor, VSCodium, Windsurf and Kiro all qualify.
+
 ## Known limits
 
 The floor a column has to clear isn't always 220. VS Code compares a group against whatever its own editor pane asks for. Settings wants 500 and is handled. A side-by-side editor wants roughly double the normal minimum, and the extension API gives no way to tell one apart from an ordinary tab, so that case is still missed. Chat panels, terminals, notebooks and diffs all sit at 220.
+
+Dragging a sash raises no event an extension can see, so a column you drag onto the floor yourself stays armed until the next time tabs or groups change. Same for toggling the side bar, which resizes every column silently.
 
 ## License
 

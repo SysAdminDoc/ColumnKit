@@ -1,101 +1,11 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import type { ColumnKitApi } from '../extension';
-import { EditorLayout, leaves } from '../layout';
+import { FLOOR, drainHistory, fillColumns, parkOnFloor, placement, settle } from './helpers';
 
 /**
  * CK-5. Reducing the column count merges surplus groups' tabs into the last one
  * and VS Code has no undo for it, so ColumnKit keeps its own ring.
  */
-
-async function readSizes(): Promise<number[]> {
-    const layout = await vscode.commands.executeCommand<EditorLayout>('vscode.getEditorLayout');
-    return leaves(layout.groups).map(n => n.size ?? 0);
-}
-
-/**
- * Waits for the grid to lay out. A group written moments ago reports the raw
- * weight it was created with, not a pixel width.
- */
-async function settle(): Promise<number[]> {
-    for (let attempt = 0; attempt < 50; attempt++) {
-        const sizes = await readSizes();
-        if (sizes.every(s => s >= 1)) {
-            return sizes;
-        }
-        await new Promise(resolve => setTimeout(resolve, 20));
-    }
-    throw new Error('editor layout never settled; last read: ' + JSON.stringify(await readSizes()));
-}
-
-const FLOOR = 220;
-
-/**
- * Parks two groups exactly on the floor, at whatever width the test host
- * happens to be. See the twin in floorGuard.test.ts for why this asks for the
- * floor outright instead of relying on VS Code to clamp a smaller request up.
- */
-async function parkOnFloor(): Promise<number[]> {
-    const width = (await settle()).reduce((a, b) => a + b, 0);
-    const wide = width - FLOOR * 2;
-    assert.ok(wide >= FLOOR, `editor area ${width} is too narrow for this setup`);
-    await vscode.commands.executeCommand('vscode.setEditorLayout', {
-        orientation: 0,
-        groups: [{ size: wide }, { size: FLOOR }, { size: FLOOR }]
-    });
-    const sizes = await settle();
-    // See the twin in floorGuard.test.ts: cancel the correction this write
-    // schedules, or it lands between the setup and the assertion.
-    (await api()).floorGuard.resume();
-    return sizes;
-}
-
-async function api(): Promise<ColumnKitApi> {
-    const ext = vscode.extensions.getExtension<ColumnKitApi>('SysAdminDoc.columnkit');
-    assert.ok(ext, 'ColumnKit extension should be present in the test host');
-    return ext.isActive ? ext.exports : await ext.activate();
-}
-
-/**
- * Empties the ring and re-arms the guard, so a test's own recordings are the
- * only ones in it and an earlier undo's suspension window does not carry over.
- */
-async function drainHistory(): Promise<ColumnKitApi> {
-    const columnKit = await api();
-    while (columnKit.history.pop()) {
-        // discard
-    }
-    columnKit.floorGuard.resume();
-    return columnKit;
-}
-
-/** Column each open document sits in, keyed by its resource. */
-function placement(): Map<string, number> {
-    const columns = new Map<string, number>();
-    for (const group of vscode.window.tabGroups.all) {
-        for (const tab of group.tabs) {
-            const input = tab.input as { uri?: vscode.Uri } | undefined;
-            if (input?.uri) {
-                columns.set(input.uri.toString(), group.viewColumn);
-            }
-        }
-    }
-    return columns;
-}
-
-/** Puts one distinct document in each of `count` columns, in order. */
-async function fillColumns(count: number): Promise<string[]> {
-    const opened: string[] = [];
-    for (let column = 1; column <= count; column++) {
-        const doc = await vscode.workspace.openTextDocument({
-            content: `undo probe column ${column}`,
-            language: 'plaintext'
-        });
-        await vscode.window.showTextDocument(doc, { viewColumn: column, preview: false });
-        opened.push(doc.uri.toString());
-    }
-    return opened;
-}
 
 suite('layout undo', () => {
     // Open editors survive into later suites and would then be dragged around

@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import type { ColumnKitApi } from '../extension';
+import { api } from './helpers';
 import {
     ASSET_PREFIX,
     RELEASE_PREFIX,
@@ -35,12 +35,6 @@ function release(overrides: Partial<Release> = {}): Release {
         ],
         ...overrides
     };
-}
-
-async function api(): Promise<ColumnKitApi> {
-    const ext = vscode.extensions.getExtension<ColumnKitApi>('SysAdminDoc.columnkit');
-    assert.ok(ext, 'ColumnKit extension should be present in the test host');
-    return ext.isActive ? ext.exports : await ext.activate();
 }
 
 suite('shouldCheck', () => {

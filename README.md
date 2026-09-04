@@ -69,6 +69,7 @@ Counts the palette doesn't list, up to 12, are in the picker.
 ```
 npm install
 npm run compile
+npm run lint
 npm run package
 ```
 

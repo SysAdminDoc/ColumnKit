@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import type { ColumnKitApi } from '../extension';
+import { api } from './helpers';
 
 /**
  * CK-31. VS Code renders the status bar `role="status"` with `aria-live="off"`,
@@ -8,12 +8,6 @@ import type { ColumnKitApi } from '../extension';
  * through an ARIA alert, so in screen reader mode the outcome has to go there
  * instead.
  */
-
-async function api(): Promise<ColumnKitApi> {
-    const ext = vscode.extensions.getExtension<ColumnKitApi>('SysAdminDoc.columnkit');
-    assert.ok(ext, 'ColumnKit extension should be present in the test host');
-    return ext.isActive ? ext.exports : await ext.activate();
-}
 
 const editor = () => vscode.workspace.getConfiguration('editor');
 

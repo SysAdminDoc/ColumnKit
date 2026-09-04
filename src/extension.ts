@@ -35,18 +35,13 @@ const AUTO_CORRECT_DEBOUNCE_MS = 120;
 const POLL_INTERVAL_MS = 2000;
 
 /**
- * How long the floor guard stands down after an undo.
+ * How long the floor guard stands down after a deliberate layout write.
  *
- * Must outlast the debounce plus the write round-trip, because the tab-group
- * event a layout write produces arrives after the write resolves.
+ * The tail on every hold, not just undo's. It has to outlast the debounce,
+ * because the tab-group event a write produces arrives after the write itself
+ * has resolved.
  */
-const UNDO_SETTLE_MS = 400;
-
-/** Sizes handed to vscode.setEditorLayout are proportions of the editor area. */
-interface EditorGroupLayout {
-    orientation: 0 | 1;
-    groups: { size: number }[];
-}
+const WRITE_SETTLE_MS = 400;
 
 function config() {
     return vscode.workspace.getConfiguration(CONFIG_SECTION);
@@ -316,7 +311,7 @@ async function enforcePins(context: vscode.ExtensionContext): Promise<boolean> {
     } catch {
         return false;
     } finally {
-        floorGuard?.endHold(UNDO_SETTLE_MS);
+        floorGuard?.endHold(WRITE_SETTLE_MS);
     }
 }
 
@@ -376,7 +371,7 @@ async function restoreRememberedLayout(context: vscode.ExtensionContext): Promis
     } catch {
         return false;
     } finally {
-        floorGuard?.endHold(UNDO_SETTLE_MS);
+        floorGuard?.endHold(WRITE_SETTLE_MS);
     }
 }
 
@@ -827,7 +822,7 @@ async function evenColumns(context: vscode.ExtensionContext): Promise<void> {
         notify(vscode.l10n.t('ColumnKit: could not even out the columns.'), 3000);
         return;
     } finally {
-        floorGuard?.endHold(UNDO_SETTLE_MS);
+        floorGuard?.endHold(WRITE_SETTLE_MS);
     }
 
     const applied = await readLayout();
@@ -1031,7 +1026,7 @@ async function evenSplitHere(): Promise<void> {
         notify(vscode.l10n.t('ColumnKit: could not even out this split.'), 3000);
         return;
     } finally {
-        floorGuard?.endHold(UNDO_SETTLE_MS);
+        floorGuard?.endHold(WRITE_SETTLE_MS);
     }
     notify(vscode.l10n.t('ColumnKit: this split is evened.'), 3000);
 }
@@ -1091,7 +1086,7 @@ async function undoLayout(): Promise<void> {
     } finally {
         // The tail covers the events the writes produce, which arrive after the
         // commands that caused them have resolved.
-        floorGuard?.endHold(UNDO_SETTLE_MS);
+        floorGuard?.endHold(WRITE_SETTLE_MS);
     }
 }
 
@@ -1132,7 +1127,7 @@ async function setColumns(columns: number): Promise<void> {
     }
 
     const size = 1 / wanted;
-    const layout: EditorGroupLayout = {
+    const layout: EditorLayout = {
         orientation: 0,
         groups: Array.from({ length: wanted }, () => ({ size }))
     };
@@ -1157,7 +1152,7 @@ async function setColumns(columns: number): Promise<void> {
         // request would make the message a guess.
         applied = await readLayout();
     } finally {
-        floorGuard?.endHold(UNDO_SETTLE_MS);
+        floorGuard?.endHold(WRITE_SETTLE_MS);
     }
     const after = applied ? leaves(applied.groups).length : wanted;
     log?.trace(`column count ${before} -> ${after} (requested ${columns}, wrote ${wanted})`);
@@ -1249,7 +1244,7 @@ async function setColumnShare(percent: number): Promise<void> {
         notify(vscode.l10n.t('ColumnKit: could not resize the columns.'), 3000);
         return;
     } finally {
-        floorGuard?.endHold(UNDO_SETTLE_MS);
+        floorGuard?.endHold(WRITE_SETTLE_MS);
     }
 
     log?.trace(`column ${index + 1} to ${percent}% (${strategy}): ${JSON.stringify(next)}`);

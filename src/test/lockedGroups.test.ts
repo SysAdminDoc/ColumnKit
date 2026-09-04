@@ -1,6 +1,9 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import type { ColumnKitApi } from '../extension';
+import { api, fillColumns, resetHost } from './helpers';
+
+const tabCount = () =>
+    vscode.window.tabGroups.all.reduce((total, group) => total + group.tabs.length, 0);
 
 /**
  * CK-34. The Claude Code extension locks the editor group it opens in, so the
@@ -9,48 +12,10 @@ import type { ColumnKitApi } from '../extension';
  * nothing had ever checked what that merge does when the target is locked.
  */
 
-async function api(): Promise<ColumnKitApi> {
-    const ext = vscode.extensions.getExtension<ColumnKitApi>('SysAdminDoc.columnkit');
-    assert.ok(ext, 'ColumnKit extension should be present in the test host');
-    return ext.isActive ? ext.exports : await ext.activate();
-}
-
-const tabCount = () =>
-    vscode.window.tabGroups.all.reduce((total, group) => total + group.tabs.length, 0);
-
-/** Puts a distinct document in each of `count` columns. */
-async function fillColumns(count: number): Promise<string[]> {
-    const titles: string[] = [];
-    for (let column = 1; column <= count; column++) {
-        const doc = await vscode.workspace.openTextDocument({
-            content: `column ${column}`,
-            language: 'plaintext'
-        });
-        await vscode.window.showTextDocument(doc, { viewColumn: column, preview: false });
-        titles.push(doc.uri.toString());
-    }
-    return titles;
-}
-
 suite('locked editor groups', () => {
-    teardown(async () => {
-        // Locks and open editors both survive into later suites, and a stale
-        // lock made the floor guard's own tests fail. Close everything, collapse
-        // to one column so no locked group can outlive the suite, then unlock
-        // whatever is left. focusEditorGroup takes no argument, so walking the
-        // columns has to go through focusNextGroup.
-        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-        for (let i = 0; i < vscode.window.tabGroups.all.length; i++) {
-            await vscode.commands.executeCommand('workbench.action.unlockEditorGroup');
-            await vscode.commands.executeCommand('workbench.action.focusNextGroup');
-        }
-        await vscode.commands.executeCommand('vscode.setEditorLayout', {
-            orientation: 0,
-            groups: [{ size: 1 }]
-        });
-        await vscode.commands.executeCommand('workbench.action.unlockEditorGroup');
-        await new Promise(resolve => setTimeout(resolve, 100));
-    });
+    // Locks and open editors both survive into later suites, and a stale lock
+    // made the floor guard's own tests report zero writes.
+    teardown(resetHost);
 
     test('a reduction onto a locked group keeps every tab and reports the truth', async function () {
         this.timeout(30000);

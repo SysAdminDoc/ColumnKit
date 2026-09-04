@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import type { ColumnKitApi } from '../extension';
 import { buildColumnPickItems } from '../extension';
+import { api } from './helpers';
 
 /**
  * CK-7. Status bar text is announced literally, so `$(split-horizontal) Even`
@@ -9,12 +9,6 @@ import { buildColumnPickItems } from '../extension';
  * There is no API to enumerate status bar items, so the items come out through
  * the activation result.
  */
-
-async function api(): Promise<ColumnKitApi> {
-    const ext = vscode.extensions.getExtension<ColumnKitApi>('SysAdminDoc.columnkit');
-    assert.ok(ext, 'ColumnKit extension should be present in the test host');
-    return ext.isActive ? ext.exports : await ext.activate();
-}
 
 suite('status bar accessibility', () => {
     test('contributes exactly one item by default', async () => {

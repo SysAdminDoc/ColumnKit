@@ -176,6 +176,34 @@ export function describeColumnChange(change: ColumnChange): string {
     return `ColumnKit: ${outcome}${risk}`;
 }
 
+/** Where one tab sat before a change that merged groups. */
+export interface TabPlacement {
+    /** Grid position of its group, 1-based, matching ViewColumn. */
+    viewColumn: number;
+    /** Position within that group, so the order inside a column survives too. */
+    index: number;
+    /**
+     * Identity that outlives the merge. Tab objects are rebuilt whenever the
+     * model changes, so a reference cannot be held across one; the resource is
+     * used where a tab has one and the label otherwise.
+     */
+    key: string;
+}
+
+/**
+ * One step of history: the geometry, plus where the tabs were when the change
+ * was going to move them.
+ */
+export interface HistoryEntry {
+    layout: EditorLayout;
+    /**
+     * Set only for a change that reduced the column count, which is the only
+     * one that merges tabs into another group. Restoring geometry is enough for
+     * everything else.
+     */
+    tabs?: TabPlacement[];
+}
+
 /**
  * Bounded history of layouts, newest last.
  *
@@ -186,16 +214,16 @@ export function describeColumnChange(change: ColumnChange): string {
  */
 export class LayoutHistory {
     static readonly MAX = 20;
-    private ring: EditorLayout[] = [];
+    private ring: HistoryEntry[] = [];
 
-    record(layout: EditorLayout): void {
-        this.ring.push(layout);
+    record(entry: HistoryEntry): void {
+        this.ring.push(entry);
         if (this.ring.length > LayoutHistory.MAX) {
             this.ring.shift();
         }
     }
 
-    pop(): EditorLayout | undefined {
+    pop(): HistoryEntry | undefined {
         return this.ring.pop();
     }
 

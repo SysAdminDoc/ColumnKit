@@ -65,7 +65,105 @@ async function drainHistory(): Promise<ColumnKitApi> {
     return columnKit;
 }
 
+/** Column each open document sits in, keyed by its resource. */
+function placement(): Map<string, number> {
+    const columns = new Map<string, number>();
+    for (const group of vscode.window.tabGroups.all) {
+        for (const tab of group.tabs) {
+            const input = tab.input as { uri?: vscode.Uri } | undefined;
+            if (input?.uri) {
+                columns.set(input.uri.toString(), group.viewColumn);
+            }
+        }
+    }
+    return columns;
+}
+
+/** Puts one distinct document in each of `count` columns, in order. */
+async function fillColumns(count: number): Promise<string[]> {
+    const opened: string[] = [];
+    for (let column = 1; column <= count; column++) {
+        const doc = await vscode.workspace.openTextDocument({
+            content: `undo probe column ${column}`,
+            language: 'plaintext'
+        });
+        await vscode.window.showTextDocument(doc, { viewColumn: column, preview: false });
+        opened.push(doc.uri.toString());
+    }
+    return opened;
+}
+
 suite('layout undo', () => {
+    // Open editors survive into later suites and would then be dragged around
+    // by another test's undo, so every test here leaves the tabs empty.
+    teardown(async () => {
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        await new Promise(resolve => setTimeout(resolve, 100));
+    });
+
+    test('puts merged tabs back in the columns they came from', async function () {
+        // CK-37. Restoring geometry alone recreates the empty columns and
+        // leaves every merged tab piled in the group applyLayout moved it to,
+        // which is the arrangement README says undo gives back.
+        this.timeout(30000);
+        const columnKit = await drainHistory();
+
+        await vscode.commands.executeCommand('columnkit.columns3');
+        await settle();
+        const opened = await fillColumns(3);
+        const before = placement();
+        assert.deepStrictEqual(
+            opened.map(uri => before.get(uri)),
+            [1, 2, 3],
+            `setup should have put one document in each column, got ${JSON.stringify([...before])}`
+        );
+        const widths = await settle();
+
+        await vscode.commands.executeCommand('columnkit.columns2');
+        await settle();
+        // Without this the test would pass on a build that never moved a tab.
+        assert.notDeepStrictEqual(
+            opened.map(uri => placement().get(uri)),
+            [1, 2, 3],
+            'the reduction should have merged a column'
+        );
+
+        await vscode.commands.executeCommand('columnkit.undoLayout');
+        await settle();
+
+        const after = placement();
+        assert.deepStrictEqual(
+            opened.map(uri => after.get(uri)),
+            [1, 2, 3],
+            `undo left the tabs at ${JSON.stringify([...after])}`
+        );
+        assert.deepStrictEqual(await settle(), widths, 'undo should restore the widths too');
+        assert.strictEqual(
+            columnKit.lastNotification()?.message,
+            'ColumnKit: layout restored.',
+            'nothing should have been reported as stranded'
+        );
+    });
+
+    test('leaves tabs alone when the change added columns rather than merging', async function () {
+        // Only a reduction moves tabs, so only a reduction records where they
+        // were. Recording on every change would drag a hand-moved tab back.
+        this.timeout(30000);
+        const columnKit = await drainHistory();
+
+        await vscode.commands.executeCommand('columnkit.columns2');
+        await settle();
+        await fillColumns(2);
+
+        await vscode.commands.executeCommand('columnkit.columns3');
+        await settle();
+        assert.strictEqual(columnKit.history.size, 2, 'both changes should be on the ring');
+
+        const entry = columnKit.history.pop();
+        assert.ok(entry, 'the widening should have recorded an entry');
+        assert.strictEqual(entry.tabs, undefined, 'a widening must not record tab placement');
+    });
+
     test('restores the column count and the widths a reduction destroyed', async () => {
         const columnKit = await drainHistory();
 

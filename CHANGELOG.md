@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- Undo now puts merged tabs back in the columns they came from. It used to restore the column widths only, so undoing a merge handed back the empty columns with every merged tab still piled into one of them, which is the arrangement undo is there to recover.
 - Nothing ColumnKit said was reaching screen reader users. VS Code marks the status bar as a non-announcing region, so every message went unheard. With screen reader mode on, outcomes are now delivered as a plain notification instead. There are no buttons on it, so it is still a toast and not a prompt.
 - Asking for more columns than the window can hold no longer parks every one of them on the minimum width, which is the exact state that makes columns expand on click. The count is capped at what fits and the message says so.
 - The message after a column change reports what the editor actually did rather than what was asked for, and counts only the window it wrote to. With a floating window open it used to count the groups in both.

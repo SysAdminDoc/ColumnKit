@@ -4,6 +4,7 @@ import {
     EditorLayout,
     LayoutHistory,
     SETTINGS_FLOOR,
+    TabPlacement,
     correctFloor,
     describeColumnChange,
     floorRisk,
@@ -265,10 +266,37 @@ function notify(message: string, timeout = 6000): void {
     }
 }
 
-async function remember(): Promise<EditorLayout | undefined> {
+/**
+ * Identity for a tab that survives a merge.
+ *
+ * Tab objects are rebuilt whenever the tab model changes, so a reference taken
+ * before a layout write is stale after it. The resource is the stable half
+ * where a tab has one: `uri` on text, custom and notebook inputs, `modified` on
+ * a diff. Webview and terminal tabs have neither, so the label carries them.
+ * Read structurally rather than through `instanceof` so a tab kind this build of
+ * @types/vscode does not know about still contributes its resource.
+ */
+function tabKey(tab: vscode.Tab): string {
+    const input = tab.input as { uri?: vscode.Uri; modified?: vscode.Uri } | undefined;
+    const uri = input?.uri ?? input?.modified;
+    return `${uri ? uri.toString() : ''} ${tab.label}`;
+}
+
+/** Where every open tab sits right now, in grid order. */
+function snapshotTabs(): TabPlacement[] {
+    const placements: TabPlacement[] = [];
+    for (const group of vscode.window.tabGroups.all) {
+        group.tabs.forEach((tab, index) => {
+            placements.push({ viewColumn: group.viewColumn, index, key: tabKey(tab) });
+        });
+    }
+    return placements;
+}
+
+async function remember(tabs?: TabPlacement[]): Promise<EditorLayout | undefined> {
     const layout = await readLayout();
     if (layout) {
-        history.record(layout);
+        history.record({ layout, tabs });
     }
     return layout;
 }
@@ -299,6 +327,81 @@ async function evenColumns(): Promise<void> {
     floorGuard?.suspendFor(UNDO_SETTLE_MS);
 }
 
+/** Focuses the group at 1-based grid position `column`. */
+async function focusColumn(column: number): Promise<void> {
+    // focusEditorGroup takes no argument, so walking is the only way. Both of
+    // these resolve through findGroup by location, which is grid order, the
+    // same order getEditorLayout and moveActiveEditor use.
+    await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+    for (let step = 1; step < column; step++) {
+        await vscode.commands.executeCommand('workbench.action.focusNextGroup');
+    }
+}
+
+/** Cycles the focused group until `key` is its active tab. */
+async function activateTab(key: string): Promise<boolean> {
+    const total = vscode.window.tabGroups.activeTabGroup.tabs.length;
+    for (let step = 0; step < total; step++) {
+        const active = vscode.window.tabGroups.activeTabGroup.activeTab;
+        if (active && tabKey(active) === key) {
+            return true;
+        }
+        await vscode.commands.executeCommand('workbench.action.nextEditorInGroup');
+    }
+    const active = vscode.window.tabGroups.activeTabGroup.activeTab;
+    return active !== undefined && tabKey(active) === key;
+}
+
+/**
+ * Puts merged tabs back in the columns they came from.
+ *
+ * Restoring geometry alone recreates the empty columns but leaves every merged
+ * tab piled in the group `applyLayout` moved it to, which is the arrangement the
+ * user is asking to get back. There is no tab-moving API, so this drives
+ * `moveActiveEditor`, whose `by: 'group'` branch indexes
+ * `getGroups(GRID_APPEARANCE)`, the same ordering the layout uses.
+ *
+ * Returns how many tabs could not be put back.
+ */
+async function restoreTabs(placements: TabPlacement[], columns: number): Promise<number> {
+    const locate = (key: string): vscode.TabGroup | undefined =>
+        vscode.window.tabGroups.all.find(group => group.tabs.some(tab => tabKey(tab) === key));
+
+    let stranded = 0;
+    // Ascending column then index, so tabs arrive in the order they sat in and
+    // a column's contents end up in their original sequence.
+    const ordered = [...placements].sort(
+        (a, b) => a.viewColumn - b.viewColumn || a.index - b.index
+    );
+
+    for (const placement of ordered) {
+        if (placement.viewColumn < 1 || placement.viewColumn > columns) {
+            // The recorded grid no longer exists, so there is nowhere to aim.
+            stranded++;
+            continue;
+        }
+        const group = locate(placement.key);
+        if (!group) {
+            // Closed since the snapshot. Not an error, just nothing to move.
+            continue;
+        }
+        if (group.viewColumn === placement.viewColumn) {
+            continue;
+        }
+        await focusColumn(group.viewColumn);
+        if (!(await activateTab(placement.key))) {
+            stranded++;
+            continue;
+        }
+        await vscode.commands.executeCommand('moveActiveEditor', {
+            to: 'position',
+            by: 'group',
+            value: placement.viewColumn
+        });
+    }
+    return stranded;
+}
+
 async function undoLayout(): Promise<void> {
     const previous = history.pop();
     if (!previous) {
@@ -310,7 +413,7 @@ async function undoLayout(): Promise<void> {
     // undo the undo.
     floorGuard?.suspendFor(UNDO_SETTLE_MS);
     try {
-        await vscode.commands.executeCommand('vscode.setEditorLayout', previous);
+        await vscode.commands.executeCommand('vscode.setEditorLayout', previous.layout);
     } catch {
         // The entry was already off the ring. Put it back rather than losing a
         // step to a write that never landed, and do not claim a restore.
@@ -322,12 +425,33 @@ async function undoLayout(): Promise<void> {
     // has been funding the write's own round-trip, and the tab-group event it
     // produces does not arrive until afterwards.
     floorGuard?.suspendFor(UNDO_SETTLE_MS);
-    notify('ColumnKit: layout restored.', 3000);
+
+    let stranded = 0;
+    if (previous.tabs) {
+        const columns = leaves(previous.layout.groups).length;
+        try {
+            stranded = await restoreTabs(previous.tabs, columns);
+        } catch {
+            // A failed move must not cost the geometry that already landed.
+            stranded = previous.tabs.length;
+        }
+        // Every move fires tab events of its own, so the guard has to stay down
+        // until after the last one rather than from the geometry write.
+        floorGuard?.suspendFor(UNDO_SETTLE_MS);
+        log?.trace(`undo moved tabs back into ${columns} columns, ${stranded} stranded`);
+    }
+
+    notify(
+        stranded === 0
+            ? 'ColumnKit: layout restored.'
+            : `ColumnKit: layout restored, but ${stranded} tab${stranded === 1 ? '' : 's'} could not be moved back.`,
+        3000
+    );
 }
 
 async function setColumns(columns: number): Promise<void> {
     // One read serves the undo ring, the width measurement and the before-count.
-    const previous = await remember();
+    const previous = await readLayout();
     // Counted from the layout rather than from tabGroups.all, which spans every
     // editor part including auxiliary windows while setEditorLayout only ever
     // writes to the active one.
@@ -344,6 +468,13 @@ async function setColumns(columns: number): Promise<void> {
     );
     const capped = fits !== undefined && columns > fits;
     const wanted = capped ? fits : columns;
+
+    // Only a reduction merges tabs into another group, so only a reduction
+    // needs their placement remembered. Recording it on every change would also
+    // drag a tab the user moved by hand back on the next undo.
+    if (previous) {
+        history.record({ layout: previous, tabs: wanted < before ? snapshotTabs() : undefined });
+    }
 
     const size = 1 / wanted;
     const layout: EditorGroupLayout = {

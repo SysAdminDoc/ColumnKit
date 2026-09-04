@@ -15,14 +15,17 @@ import {
 } from '../layout';
 
 suite('LayoutHistory', () => {
+    // An entry now carries the geometry plus, for a change that merged groups,
+    // where the tabs were. These assert on `.layout` for that reason.
     const layout = (n: number) => ({ orientation: 0 as const, groups: [{ size: n }] });
+    const entry = (n: number) => ({ layout: layout(n) });
 
     test('returns the most recent layout first', () => {
         const history = new LayoutHistory();
-        history.record(layout(1));
-        history.record(layout(2));
-        assert.deepStrictEqual(history.pop(), layout(2));
-        assert.deepStrictEqual(history.pop(), layout(1));
+        history.record(entry(1));
+        history.record(entry(2));
+        assert.deepStrictEqual(history.pop()?.layout, layout(2));
+        assert.deepStrictEqual(history.pop()?.layout, layout(1));
     });
 
     test('reports nothing to undo when empty', () => {
@@ -33,12 +36,12 @@ suite('LayoutHistory', () => {
     test('drops the oldest entry once full rather than growing without bound', () => {
         const history = new LayoutHistory();
         for (let i = 0; i < LayoutHistory.MAX + 5; i++) {
-            history.record(layout(i));
+            history.record(entry(i));
         }
         assert.strictEqual(history.size, LayoutHistory.MAX);
         // The newest survives and the oldest five are gone, so the entry left at
         // the bottom is the sixth one recorded.
-        assert.deepStrictEqual(history.pop(), layout(LayoutHistory.MAX + 4));
+        assert.deepStrictEqual(history.pop()?.layout, layout(LayoutHistory.MAX + 4));
         for (let i = 0; i < LayoutHistory.MAX - 1; i++) {
             history.pop();
         }
@@ -47,8 +50,8 @@ suite('LayoutHistory', () => {
 
     test('clears, so a second activation does not inherit an old stack', () => {
         const history = new LayoutHistory();
-        history.record(layout(1));
-        history.record(layout(2));
+        history.record(entry(1));
+        history.record(entry(2));
         history.clear();
         assert.strictEqual(history.size, 0);
         assert.strictEqual(history.pop(), undefined);
@@ -57,10 +60,25 @@ suite('LayoutHistory', () => {
     test('tracks its size as entries go in and out', () => {
         const history = new LayoutHistory();
         assert.strictEqual(history.size, 0);
-        history.record(layout(1));
+        history.record(entry(1));
         assert.strictEqual(history.size, 1);
         history.pop();
         assert.strictEqual(history.size, 0);
+    });
+
+    test('carries tab placement back out with the layout that recorded it', () => {
+        // CK-37. Geometry alone recreates the empty columns and leaves every
+        // merged tab where the merge put it, so the placement has to survive
+        // the round trip through the ring.
+        const history = new LayoutHistory();
+        const tabs = [
+            { viewColumn: 1, index: 0, key: 'file:///a one' },
+            { viewColumn: 3, index: 1, key: 'file:///b two' }
+        ];
+        history.record({ layout: layout(1), tabs });
+        history.record({ layout: layout(2) });
+        assert.strictEqual(history.pop()?.tabs, undefined, 'a non-merging change records no tabs');
+        assert.deepStrictEqual(history.pop()?.tabs, tabs);
     });
 });
 

@@ -71,6 +71,11 @@
         "icon": "$(percentage)"
       },
       {
+        "command": "columnkit.columns1",
+        "title": "%command.columns1.title%",
+        "category": "%category%"
+      },
+      {
         "command": "columnkit.columns2",
         "title": "%command.columns2.title%",
         "category": "%category%"
@@ -96,8 +101,33 @@
         "category": "%category%"
       },
       {
+        "command": "columnkit.columns7",
+        "title": "%command.columns7.title%",
+        "category": "%category%"
+      },
+      {
         "command": "columnkit.columns8",
         "title": "%command.columns8.title%",
+        "category": "%category%"
+      },
+      {
+        "command": "columnkit.columns9",
+        "title": "%command.columns9.title%",
+        "category": "%category%"
+      },
+      {
+        "command": "columnkit.columns10",
+        "title": "%command.columns10.title%",
+        "category": "%category%"
+      },
+      {
+        "command": "columnkit.columns11",
+        "title": "%command.columns11.title%",
+        "category": "%category%"
+      },
+      {
+        "command": "columnkit.columns12",
+        "title": "%command.columns12.title%",
         "category": "%category%"
       }
     ],

@@ -53,7 +53,7 @@ If you would rather have the numbers as permanent buttons instead of a hover men
 
 ## Commands
 
-Everything is in the palette under `ColumnKit`, if you'd rather type than click.
+Everything is in the palette under `ColumnKit`, if you'd rather type than click. That matters beyond preference: the hover menu on the status bar button needs a pointer, so the palette is the keyboard route, and every action including all twelve column counts is there.
 
 - `ColumnKit: Even Out Columns`
 - `ColumnKit: Set Column Count...`
@@ -63,9 +63,7 @@ Everything is in the palette under `ColumnKit`, if you'd rather type than click.
 - `ColumnKit: Pin or Unpin This Column's Width`
 - `ColumnKit: Copy Layout to Clipboard`
 - `ColumnKit: Apply Layout from Clipboard`
-- `ColumnKit: 2 Columns`, `3`, `4`, `5`, `6` and `8 Columns`
-
-Counts the palette doesn't list, up to 12, are in the picker.
+- `ColumnKit: 1 Column` through `ColumnKit: 12 Columns`
 
 ## Build
 

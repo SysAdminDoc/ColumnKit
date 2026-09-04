@@ -25,5 +25,11 @@
     "config.remainderStrategy": "How the other columns share what is left when you set one column's width. Even gives them equal widths. Proportional keeps their relative sizes, so a column that was already wider stays wider.",
     "config.watchWhileIdle": "Also check the column widths every couple of seconds while this window has focus. Dragging a sash raises no event an extension can see, so a column you drag onto the minimum width stays armed until something else happens. Off by default because it is a timer rather than a reaction to anything.",
     "command.copyLayout.title": "Copy Layout to Clipboard",
-    "command.pasteLayout.title": "Apply Layout from Clipboard"
+    "command.pasteLayout.title": "Apply Layout from Clipboard",
+    "command.columns1.title": "1 Column",
+    "command.columns7.title": "7 Columns",
+    "command.columns9.title": "9 Columns",
+    "command.columns10.title": "10 Columns",
+    "command.columns11.title": "11 Columns",
+    "command.columns12.title": "12 Columns"
 }

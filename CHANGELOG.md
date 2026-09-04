@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- Every column count is in the command palette now, 1 through 12. Six of them were registered but never listed, and the hover menu that carried the rest needs a pointer, so a keyboard user could only reach them through the picker.
 - The column picker no longer opens with Undo selected. It sat at the top of the list, so opening the picker and pressing Enter undid a layout change instead of choosing a count. It's at the bottom now, behind a separator, and the count you already have starts selected. Counts too large for the window say so in the list rather than after you pick one.
 - `Even` tells you what it did. It was the one button that finished in silence, and it never warned when the columns it produced were going to sit on the minimum width. Running it on an already-even layout also no longer adds an undo step that restores the same widths.
 - The guard now notices a pane that shrinks its own column. Opening Settings in a narrow column has VS Code clamp that column to exactly 500, which is the width that makes it expand on click, and only a tab event fires. ColumnKit was listening for group changes alone and slept through it.

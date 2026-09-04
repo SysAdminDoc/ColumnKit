@@ -164,6 +164,23 @@ suite('manifest', () => {
         assert.deepStrictEqual(missing, [], `contributed but never registered: ${missing.join(', ')}`);
     });
 
+    test('every preset is in the command palette, not only in the hover menu', async () => {
+        // CK-53. The hover menu on the status bar item needs a mouse, so the
+        // palette is the keyboard path and it has to carry everything. Counts
+        // 1, 7 and 9 through 12 were registered but never contributed, leaving
+        // the picker as their only route.
+        const contributed = new Set<string>(
+            manifest().contributes.commands.map((c: { command: string }) => c.command)
+        );
+        const missing: string[] = [];
+        for (let n = 1; n <= 12; n++) {
+            if (!contributed.has(`columnkit.columns${n}`)) {
+                missing.push(`columnkit.columns${n}`);
+            }
+        }
+        assert.deepStrictEqual(missing, [], 'presets a keyboard user cannot reach directly');
+    });
+
     test('every status bar preset resolves to a live command', async () => {
         const registered = await vscode.commands.getCommands(true);
         // statusBarPresets accepts 1..12, and the status bar targets
